@@ -1,0 +1,21 @@
+# Lisp compiled files
+*.fasl
+*.fas
+*.lib
+*.o
+*.a
+
+# SBCL specific
+*.core
+
+# Editor backups
+*~
+\#*\#
+.\#*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Quicklisp local projects link
+quicklisp/

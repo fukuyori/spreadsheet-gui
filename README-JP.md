@@ -1,14 +1,14 @@
 # Spreadsheet GUI
 
-A simple spreadsheet application built with Common Lisp and LTK (Lisp Toolkit)
+Common Lisp + LTK で作るシンプルな表計算ソフト
 
 ![Version](https://img.shields.io/badge/version-0.1-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
-[日本語版 README](README-JP.md)
+[English README](README.md)
 
-## Screenshot
+## スクリーンショット
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -25,24 +25,24 @@ A simple spreadsheet application built with Common Lisp and LTK (Lisp Toolkit)
 └────┴────────┴────────┴────────┴────────┴────────────┘
 ```
 
-## Features
+## 特徴
 
-- **S-expression formulas** - Use Lisp syntax directly for calculations
-- **Cell references** - Reference cells with symbols like `A1`, `B2`
-- **Range selection** - Select ranges with `(range A1 A5)`
-- **Aggregate functions** - `sum`, `avg`, `max`, `min`, `count`
-- **GUI interaction** - Navigate with arrow keys and mouse clicks
+- **S式による数式入力** - Lispの構文をそのまま活用
+- **セル参照** - `A1`, `B2` などシンボルで直接参照
+- **範囲指定** - `(range A1 A5)` で範囲選択
+- **集計関数** - `sum`, `avg`, `max`, `min`, `count`
+- **GUI操作** - クリック・矢印キーでセル移動
 
-## Requirements
+## 必要環境
 
 - **SBCL** (Steel Bank Common Lisp)
 - **Quicklisp**
-- **LTK** (Lisp Toolkit - Tk bindings)
-- **Tcl/Tk** 8.5 or later
+- **LTK** (Lisp Toolkit - Tk バインディング)
+- **Tcl/Tk** 8.5以上
 
-## Installation
+## インストール
 
-### 1. Install SBCL
+### 1. SBCLのインストール
 
 ```bash
 # Ubuntu/Debian
@@ -52,10 +52,10 @@ sudo apt install sbcl
 brew install sbcl
 
 # Windows
-# Download from https://www.sbcl.org/platform-table.html
+# https://www.sbcl.org/platform-table.html からダウンロード
 ```
 
-### 2. Install Quicklisp
+### 2. Quicklispのインストール
 
 ```bash
 curl -O https://beta.quicklisp.org/quicklisp.lisp
@@ -68,7 +68,7 @@ sbcl --load quicklisp.lisp
 (quit)
 ```
 
-### 3. Install Tcl/Tk
+### 3. Tcl/Tkのインストール
 
 ```bash
 # Ubuntu/Debian
@@ -78,32 +78,32 @@ sudo apt install tk
 brew install tcl-tk
 
 # Windows
-# Tcl/Tk is usually pre-installed
+# Tcl/Tkは通常プリインストール済み
 ```
 
-## Usage
+## 使い方
 
-### Starting the Application
+### 起動
 
 ```lisp
 (load "spreadsheet-gui.lisp")
 (ss-gui:start)
 ```
 
-### Controls
+### 操作方法
 
-| Key/Action | Description |
-|------------|-------------|
-| `Arrow keys` | Move between cells |
-| `Click` | Select a cell |
-| `Enter` (on grid) | Focus on input field |
-| `Enter` (on input) | Confirm input |
+| 操作 | 説明 |
+|------|------|
+| `矢印キー` | セル移動 |
+| `クリック` | セル選択 |
+| `Enter` (グリッド上) | 入力欄へフォーカス |
+| `Enter` (入力欄) | 入力確定 |
 
-### Formula Syntax
+### 数式の入力
 
-Formulas start with `=` and use S-expression syntax.
+数式は `=` で始め、S式で記述します。
 
-#### Basic Operations
+#### 基本演算
 
 ```lisp
 =(+ A1 B1)        ; A1 + B1
@@ -112,113 +112,113 @@ Formulas start with `=` and use S-expression syntax.
 =(/ A1 B1)        ; A1 ÷ B1
 ```
 
-#### Aggregate Functions
+#### 集計関数
 
 ```lisp
-=(sum A1 B1 C1)   ; Sum
-=(avg A1 B1 C1)   ; Average
-=(max A1 B1 C1)   ; Maximum
-=(min A1 B1 C1)   ; Minimum
-=(count A1 B1 C1) ; Count
+=(sum A1 B1 C1)   ; 合計
+=(avg A1 B1 C1)   ; 平均
+=(max A1 B1 C1)   ; 最大値
+=(min A1 B1 C1)   ; 最小値
+=(count A1 B1 C1) ; 個数
 ```
 
-#### Range Selection
+#### 範囲指定
 
 ```lisp
-=(sum (range A1 A5))    ; Sum of A1 to A5 (vertical)
-=(sum (range A1 C1))    ; Sum of A1 to C1 (horizontal)
-=(sum (range A1 C3))    ; Sum of rectangular range
-=(avg (range A1 A10))   ; Average of range
+=(sum (range A1 A5))    ; A1〜A5の合計（縦）
+=(sum (range A1 C1))    ; A1〜C1の合計（横）
+=(sum (range A1 C3))    ; 矩形範囲の合計
+=(avg (range A1 A10))   ; 範囲の平均
 ```
 
-#### Nested Expressions
+#### 入れ子
 
 ```lisp
-=(+ (sum (range A1 A5)) B1)   ; Range sum + single cell
-=(* (avg (range A1 A3)) 2)    ; Average × 2
+=(+ (sum (range A1 A5)) B1)   ; 範囲合計 + 単一セル
+=(* (avg (range A1 A3)) 2)    ; 平均 × 2
 ```
 
-## Architecture
+## アーキテクチャ
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    GUI (LTK/Tk)                     │
 │  ┌──────────────┐  ┌─────────────────────────────┐  │
 │  │    Entry     │  │          Canvas             │  │
-│  │(formula input)│  │    (cell grid display)     │  │
+│  │  (数式入力)   │  │   (セルグリッド描画)         │  │
 │  └──────────────┘  └─────────────────────────────┘  │
 ├─────────────────────────────────────────────────────┤
-│                  Event Handling                     │
-│       Key input / Mouse click / Enter confirm       │
+│                  イベント処理                        │
+│    キー入力 / マウスクリック / Enter確定            │
 ├─────────────────────────────────────────────────────┤
-│                 Formula Evaluation                  │
+│                  数式評価エンジン                    │
 │  ┌─────────────┐  ┌─────────────┐  ┌────────────┐  │
 │  │ eval-formula│  │ expand-range│  │ cell-ref-p │  │
-│  │(S-exp eval) │  │(range expand)│ │(ref check) │  │
+│  │ (S式評価)   │  │ (範囲展開)  │  │ (参照判定) │  │
 │  └─────────────┘  └─────────────┘  └────────────┘  │
 ├─────────────────────────────────────────────────────┤
-│                    Data Model                       │
-│   *sheet* (hash-table: cell-name → cell struct)     │
-│   cell: value (display) + formula (S-expression)    │
+│                  データモデル                        │
+│    *sheet* (ハッシュテーブル: セル名 → cell構造体)  │
+│    cell: value (表示値) + formula (数式)            │
 └─────────────────────────────────────────────────────┘
 ```
 
-## Configuration
+## 設定
 
-Configurable parameters at the top of `spreadsheet-gui.lisp`:
+`spreadsheet-gui.lisp` の先頭で変更可能：
 
 ```lisp
-(defparameter *rows* 20)       ; Number of rows
-(defparameter *cols* 10)       ; Number of columns
-(defparameter *cell-w* 80)     ; Cell width (px)
-(defparameter *cell-h* 24)     ; Cell height (px)
+(defparameter *rows* 20)       ; 行数
+(defparameter *cols* 10)       ; 列数
+(defparameter *cell-w* 80)     ; セル幅（px）
+(defparameter *cell-h* 24)     ; セル高さ（px）
 ```
 
-## File Structure
+## ファイル構成
 
 ```
 .
-├── README.md                 ; English documentation
-├── README-JP.md              ; Japanese documentation
+├── README.md                 ; 英語ドキュメント
+├── README-JP.md              ; 日本語ドキュメント
 ├── LICENSE
 ├── .gitignore
-├── spreadsheet-gui.lisp      ; Main file (latest)
-└── spreadsheet-gui-v0.1.lisp ; v0.1 archive
+├── spreadsheet-gui.lisp      ; メインファイル（最新版）
+└── spreadsheet-gui-v0.1.lisp ; v0.1 アーカイブ
 ```
 
-## Roadmap
+## ロードマップ
 
-### v0.2 (Planned)
+### v0.2 (予定)
 
-- [ ] File save/load
-- [ ] Copy & paste cells
+- [ ] ファイル保存/読み込み
+- [ ] セルのコピー＆ペースト
 - [ ] Undo/Redo
 
-### v0.3 (Planned)
+### v0.3 (予定)
 
-- [ ] Column width adjustment
-- [ ] Cell formatting
-- [ ] Conditional formatting
+- [ ] 列幅の調整
+- [ ] セルの書式設定
+- [ ] 条件付き書式
 
-### Future
+### 将来
 
-- [ ] Charts
-- [ ] CSV import/export
-- [ ] Macro functionality
+- [ ] グラフ機能
+- [ ] CSV インポート/エクスポート
+- [ ] マクロ機能
 
-## License
+## ライセンス
 
 MIT License
 
-## Author
+## 作者
 
-Fukuyori
+福寄
 
-## Contributing
+## 貢献
 
-Issues and Pull Requests are welcome.
+Issue、Pull Request 歓迎します。
 
-## References
+## 参考
 
 - [LTK Manual](http://www.peter-herth.de/ltk/ltkdoc/)
 - [SBCL Manual](http://www.sbcl.org/manual/)
