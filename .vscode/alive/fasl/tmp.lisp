@@ -2,12 +2,13 @@
 ;;;; spreadsheet-gui.lisp
 ;;;; Common Lisp + LTK で作るシンプルな表計算ソフト
 ;;;; 
-;;;; Version: 0.2
+;;;; Version: 0.3
 ;;;; Date: 2025-01-15
 ;;;; 
 ;;;; 機能:
 ;;;;   - セルへの値・数式入力
 ;;;;   - Lispの非破壊関数をサポート
+;;;;   - lambda式、apply、funcall
 ;;;;   - 戻り値はリスト、シンボル等任意のLisp値
 ;;;;   - 範囲指定 (range A1 A5)
 ;;;;   - 条件分岐 (if ...) (cond ...)
@@ -31,8 +32,8 @@
 ;;;; 設定（グリッドサイズ・セル寸法）
 ;;;; =========================
 
-(defparameter *rows* 20)          ; 行数
-(defparameter *cols* 10)          ; 列数
+(defparameter *rows* 26)          ; 行数
+(defparameter *cols* 14)          ; 列数 (A-N)
 (defparameter *cell-w* 100)       ; セル幅（ピクセル）※リスト表示用に拡大
 (defparameter *cell-h* 24)        ; セル高さ（ピクセル）
 (defparameter *header-h* 24)      ; 列ヘッダー(A,B,C...)の高さ
@@ -137,8 +138,8 @@
     pi
     ;; スプレッドシート専用
     sum avg count range ref
-    ;; lambda
-    lambda))
+    ;; lambda / apply / funcall
+    lambda apply funcall))
 
 ;;;; =========================
 ;;;; 数式評価エンジン（拡張版）
@@ -294,6 +295,15 @@
      (let* ((op (car expr))
             (op-name (if (symbolp op) (string-upcase (symbol-name op)) "")))
        (cond
+         ;; ((lambda (x) ...) args...) - lambda式の直接呼び出し
+         ((and (listp op)
+               (symbolp (car op))
+               (string-equal (symbol-name (car op)) "LAMBDA"))
+          (let ((fn (eval-formula op))
+                (args (mapcar #'eval-formula (cdr expr))))
+            (if (functionp fn)
+                (apply fn args)
+                (format nil "ERR: not a function"))))
          ;; LAMBDA - 無名関数を作成
          ((string-equal op-name "LAMBDA")
           (let ((params (cadr expr))
@@ -371,6 +381,40 @@
                  (rest-args (cdddr expr)))
             (if (functionp fn)
                 (apply #'reduce fn lst rest-args)
+                (format nil "ERR: not a function"))))
+         ;; APPLY
+         ((string-equal op-name "APPLY")
+          (let* ((fn-expr (cadr expr))
+                 (fn (cond
+                       ((and (listp fn-expr) (eq (car fn-expr) 'function))
+                        (get-lisp-function (symbol-name (cadr fn-expr))))
+                       ((and (listp fn-expr)
+                             (string-equal (symbol-name (car fn-expr)) "LAMBDA"))
+                        (eval-formula fn-expr))
+                       (t (eval-formula fn-expr))))
+                 (args (mapcar #'eval-formula (cddr expr))))
+            (if (functionp fn)
+                ;; 最後の引数がリストならspread、そうでなければそのまま
+                (let* ((last-arg (car (last args)))
+                       (init-args (butlast args))
+                       (all-args (if (listp last-arg)
+                                     (append init-args last-arg)
+                                     args)))
+                  (apply fn all-args))
+                (format nil "ERR: not a function"))))
+         ;; FUNCALL
+         ((string-equal op-name "FUNCALL")
+          (let* ((fn-expr (cadr expr))
+                 (fn (cond
+                       ((and (listp fn-expr) (eq (car fn-expr) 'function))
+                        (get-lisp-function (symbol-name (cadr fn-expr))))
+                       ((and (listp fn-expr)
+                             (string-equal (symbol-name (car fn-expr)) "LAMBDA"))
+                        (eval-formula fn-expr))
+                       (t (eval-formula fn-expr))))
+                 (args (mapcar #'eval-formula (cddr expr))))
+            (if (functionp fn)
+                (apply fn args)
                 (format nil "ERR: not a function"))))
          ;; REMOVE-IF / REMOVE-IF-NOT / COUNT-IF
          ((or (string-equal op-name "REMOVE-IF")
@@ -528,33 +572,35 @@
         (draw-cell-text canvas x y (cell-value cell))))))
 
 ;;;; =========================
-;;;; 入力欄（Entry）の操作
+;;;; 入力欄（Text）の操作
 ;;;; =========================
 
-(defun entry-text (e)
-  "Entryの内容を取得"
-  (text e))
+(defun get-text-content (text-widget)
+  "Textウィジェットの内容を取得"
+  (let ((content (text text-widget)))
+    ;; 末尾の改行を除去
+    (string-right-trim '(#\Newline #\Return) content)))
 
-(defun set-entry-text (e s)
-  "Entryに文字列を設定"
-  (setf (text e) (if s (princ-to-string s) "")))
+(defun set-text-content (text-widget s)
+  "Textウィジェットに文字列を設定"
+  (setf (text text-widget) (if s (princ-to-string s) "")))
 
-(defun update-entry (entry)
-  "現在セルの内容をEntryに表示"
+(defun update-text-input (text-widget)
+  "現在セルの内容をTextウィジェットに表示"
   (let ((c (current-cell)))
     (cond
       ;; 数式があれば =(...) 形式で表示
       ((cell-formula c)
-       (set-entry-text entry (format nil "=~S" (cell-formula c))))
+       (set-text-content text-widget (format nil "=~S" (cell-formula c))))
       ;; 値があればそのまま表示
       ((cell-value c)
-       (set-entry-text entry (format nil "~S" (cell-value c))))
+       (set-text-content text-widget (format nil "~S" (cell-value c))))
       (t
-       (set-entry-text entry "")))))
+       (set-text-content text-widget "")))))
 
-(defun commit-entry (entry canvas)
-  "Entryの内容をセルに確定"
-  (let* ((raw (or (entry-text entry) ""))
+(defun commit-text-input (text-widget canvas)
+  "Textウィジェットの内容をセルに確定"
+  (let* ((raw (or (get-text-content text-widget) ""))
          (cell (current-cell)))
     (handler-case
         (if (and (> (length raw) 0)
@@ -572,6 +618,12 @@
         (setf (cell-value cell) (format nil "ERR: ~a" e))))
     (redraw canvas)))
 
+;;; 後方互換性のため旧関数も残す
+(defun entry-text (e) (get-text-content e))
+(defun set-entry-text (e s) (set-text-content e s))
+(defun update-entry (e) (update-text-input e))
+(defun commit-entry (e c) (commit-text-input e c))
+
 ;;;; =========================
 ;;;; カーソル移動
 ;;;; =========================
@@ -580,68 +632,96 @@
   "値を範囲内に制限"
   (max lo (min hi v)))
 
-(defun move-left (canvas entry)
+(defun move-left (canvas text-widget)
   (setf *cur-x* (max 0 (1- *cur-x*)))
-  (update-entry entry)
+  (update-text-input text-widget)
   (redraw canvas))
 
-(defun move-right (canvas entry)
+(defun move-right (canvas text-widget)
   (setf *cur-x* (min (1- *cols*) (1+ *cur-x*)))
-  (update-entry entry)
+  (update-text-input text-widget)
   (redraw canvas))
 
-(defun move-up (canvas entry)
+(defun move-up (canvas text-widget)
   (setf *cur-y* (max 0 (1- *cur-y*)))
-  (update-entry entry)
+  (update-text-input text-widget)
   (redraw canvas))
 
-(defun move-down (canvas entry)
+(defun move-down (canvas text-widget)
   (setf *cur-y* (min (1- *rows*) (1+ *cur-y*)))
-  (update-entry entry)
+  (update-text-input text-widget)
   (redraw canvas))
 
 ;;;; =========================
 ;;;; メイン：GUIの構築と起動
 ;;;; =========================
 
-(defun start ()
-  "スプレッドシートを起動"
+(defun start (&key (rows 26) (cols 14) (input-lines 3))
+  "スプレッドシートを起動
+   :rows        行数（デフォルト26）
+   :cols        列数（デフォルト14、最大26=A-Z）
+   :input-lines 入力欄の行数（デフォルト3）"
+  ;; パラメータ設定
+  (setf *rows* rows)
+  (setf *cols* (min cols 26))  ; 最大26列（A-Z）
+  
   ;; 初期化
   (setf *sheet* (make-hash-table :test #'equal))
   (setf *cur-x* 0 *cur-y* 0)
   
   (with-ltk ()
-    (wm-title *tk* "Spreadsheet v0.2 - Lisp Powered")
+    (wm-title *tk* (format nil "Spreadsheet v0.3 [~Dx~D]" *cols* *rows*))
     
     ;; ウィジェット作成
-    (let* ((canvas (make-instance 'canvas
+    (let* ((input-frame (make-instance 'frame))
+           ;; 複数行入力用Textウィジェット
+           (input-text (make-instance 'text
+                                      :master input-frame
+                                      :width 80
+                                      :height input-lines
+                                      :font "Consolas 11"))
+           (input-scroll (make-instance 'scrollbar 
+                                        :master input-frame
+                                        :orientation :vertical))
+           (canvas (make-instance 'canvas
                                   :width (+ *header-w* (* *cols* *cell-w*))
-                                  :height (+ *header-h* (* *rows* *cell-h*))))
-           (entry (make-instance 'entry)))
+                                  :height (+ *header-h* (* *rows* *cell-h*)))))
+      
+      ;; スクロールバーとテキストを連携
+      (configure input-scroll :command (format nil "~a yview" (widget-path input-text)))
+      (configure input-text :yscrollcommand (format nil "~a set" (widget-path input-scroll)))
       
       ;; レイアウト
-      (pack entry :fill :x)
+      (pack input-frame :fill :x :padx 2 :pady 2)
+      (pack input-scroll :side :right :fill :y)
+      (pack input-text :side :left :fill :both :expand t)
       (pack canvas)
 
       ;; サンプルデータ
       (setf (cell-value (get-cell "A1")) 10)
       (setf (cell-value (get-cell "A2")) 20)
       (setf (cell-value (get-cell "A3")) 30)
-      (setf (cell-value (get-cell "B1")) '(1 2 3))
-      (setf (cell-value (get-cell "C1")) :keyword)
+      (setf (cell-value (get-cell "B1")) '(1 2 3 4 5))
 
       ;; 初期描画
-      (update-entry entry)
+      (update-text-input input-text)
       (redraw canvas)
 
       ;;; --- イベントバインド ---
 
-      ;; Entry上でEnter → 入力確定
-      (bind entry "<Return>"
+      ;; まずLTKのbindでコールバックを設定（内部でsendeventが設定される）
+      (bind input-text "<Return>"
             (lambda (evt)
               (declare (ignore evt))
-              (commit-entry entry canvas)
+              (commit-text-input input-text canvas)
               (focus canvas)))
+      
+      ;; 次にTclレベルでバインディングを調整
+      (let ((path (widget-path input-text)))
+        ;; 現在のReturnバインディングを取得して、末尾にbreakを追加
+        (format-wish "bind ~a <Return> \"[bind ~a <Return>]; break\"" path path)
+        ;; Shift+Returnを追加（改行を挿入してbreak）
+        (format-wish "bind ~a <Shift-Return> {~a insert insert \\n; break}" path path))
 
       ;; セルクリック → カーソル移動
       (bind canvas "<ButtonPress-1>"
@@ -652,46 +732,43 @@
                            (> mx *header-w*) (> my *header-h*))
                   (setf *cur-x* (clamp (floor (/ (- mx *header-w*) *cell-w*)) 0 (1- *cols*))
                         *cur-y* (clamp (floor (/ (- my *header-h*) *cell-h*)) 0 (1- *rows*)))
-                  (update-entry entry)
+                  (update-text-input input-text)
                   (redraw canvas)))
               (focus canvas)))
 
       ;; 矢印キー
       (bind canvas "<Left>"
-            (lambda (evt) (declare (ignore evt)) (move-left canvas entry)))
+            (lambda (evt) (declare (ignore evt)) (move-left canvas input-text)))
       (bind canvas "<Right>"
-            (lambda (evt) (declare (ignore evt)) (move-right canvas entry)))
+            (lambda (evt) (declare (ignore evt)) (move-right canvas input-text)))
       (bind canvas "<Up>"
-            (lambda (evt) (declare (ignore evt)) (move-up canvas entry)))
+            (lambda (evt) (declare (ignore evt)) (move-up canvas input-text)))
       (bind canvas "<Down>"
-            (lambda (evt) (declare (ignore evt)) (move-down canvas entry)))
+            (lambda (evt) (declare (ignore evt)) (move-down canvas input-text)))
 
-      ;; Canvas上でEnter → Entryにフォーカス
+      ;; Canvas上でEnter → Textにフォーカス
       (bind canvas "<Return>"
             (lambda (evt)
               (declare (ignore evt))
-              (focus entry)))
+              (focus input-text)))
 
       (focus canvas))))
 
 ;;; ロード時メッセージ
-(format t "~%=== Spreadsheet GUI v0.2 ===~%")
+(format t "~%=== Spreadsheet GUI v0.3 ===~%")
 (format t "Lisp Powered Edition~%~%")
 (format t "起動: (ss-gui:start)~%")
+(format t "      (ss-gui:start :rows 30 :cols 10 :input-lines 5)~%")
+(format t "~%パラメータ:~%")
+(format t "  :rows        行数（デフォルト26）~%")
+(format t "  :cols        列数（デフォルト14、最大26）~%")
+(format t "  :input-lines 入力欄の行数（デフォルト3）~%")
 (format t "~%基本操作:~%")
 (format t "  矢印キー/クリック : セル移動~%")
-(format t "  Enter            : 入力開始/確定~%")
+(format t "  Enter            : 入力欄へ移動 / 入力確定~%")
+(format t "  Shift+Enter      : 入力欄内で改行~%")
 (format t "~%数式例（=で始める）:~%")
-(format t "  =(+ A1 B1)              ; 加算~%")
-(format t "  =(sum (range A1 A5))    ; 範囲合計~%")
-(format t "  =(list 1 2 3)           ; リスト作成~%")
-(format t "  =(reverse '(a b c))     ; リスト反転~%")
-(format t "  =(mapcar #'1+ '(1 2 3)) ; マップ~%")
-(format t "  =(mapcar (lambda (x) (* x x)) '(1 2 3 4)) ; lambda~%")
-(format t "  =(if (> A1 10) :big :small) ; 条件分岐~%")
-(format t "  =(sqrt (* pi 2))        ; 数学関数~%")
-(format t "~%値の型と背景色:~%")
-(format t "  白   : 数値~%")
-(format t "  薄緑 : リスト~%")
-(format t "  薄赤 : シンボル~%")
-(format t "  薄黄 : 文字列~%")
+(format t "  =(+ A1 B1)~%")
+(format t "  =(sum (range A1 A5))~%")
+(format t "  =(mapcar (lambda (x) (* x x)) '(1 2 3 4))~%")
+(format t "  =(apply #'+ '(1 2 3 4 5))~%")

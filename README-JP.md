@@ -2,7 +2,7 @@
 
 Common Lisp + LTK で作る Lisp パワード表計算ソフト
 
-![Version](https://img.shields.io/badge/version-0.2-blue.svg)
+![Version](https://img.shields.io/badge/version-0.3-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -10,35 +10,37 @@ Common Lisp + LTK で作る Lisp パワード表計算ソフト
 
 ## 概要
 
-数式をLispのS式で記述するユニークな表計算ソフト。セルには数値だけでなく、リスト、シンボル、文字列など任意のLisp値を格納可能。lambda式によるデータ変換もサポート。
+数式をLispのS式で記述するユニークな表計算ソフト。セルには数値だけでなく、リスト、シンボル、文字列など任意のLisp値を格納可能。lambda式、apply、funcallによるデータ変換もサポート。
 
 ## スクリーンショット
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │ =(mapcar (lambda (x) (* x x)) A1)                                   │
+│                                                        [Enter: 確定]│
+│                                                  [Shift+Enter: 改行]│
 ├────┬────────────┬────────────────────────┬──────────┬───────────────┤
-│    │     A      │           B            │    C     │      D        │
+│    │     A      │           B            │    C     │   ...         │
 ├────┼────────────┼────────────────────────┼──────────┼───────────────┤
 │  1 │ (1 2 3 4 5)│ (1 4 9 16 25)          │          │               │
 │  2 │     10     │ Hello, World!                     │               │
-│  3 │     20     │                        │          │               │
-│  4 │     30     │                        │          │               │
+│ .. │            │                        │          │               │
 └────┴────────────┴────────────────────────┴──────────┴───────────────┘
-       (リスト/緑)  (リスト/緑)            
        
+* 起動パラメータでグリッドサイズを指定可能
+* 複数行の数式入力欄
 * 長いテキストは右側の空セルにはみ出して表示
-* 背景色で値の型を識別
 ```
 
 ## 特徴
 
+- **グリッドサイズ指定** - 起動時に行数、列数、入力欄を指定可能
 - **S式による数式** - Lispの構文をそのまま活用
 - **lambda式** - `(lambda (x) ...)` でカスタム変換
+- **apply / funcall** - 関数適用をサポート
+- **複数行入力** - 数式入力欄が複数行に対応
 - **任意のLisp値** - 数値、リスト、シンボル、文字列、キーワード
-- **セル参照とlambda** - `(mapcar (lambda (x) (* x x)) A1)`
 - **テキストはみ出し** - 長い内容は隣の空セルに拡張表示
-- **型別の背景色** - 値の型を視覚的に識別
 - **80以上の純粋関数** - ホワイトリストされた非破壊関数
 
 ## 必要環境
@@ -76,14 +78,34 @@ sbcl --load quicklisp.lisp
 (ss-gui:start)
 ```
 
+### 起動パラメータ
+
+```lisp
+;; デフォルト: 26行, 14列, 入力欄3行
+(ss-gui:start)
+
+;; カスタムサイズ
+(ss-gui:start :rows 30 :cols 10)
+
+;; 入力欄を大きく
+(ss-gui:start :rows 20 :cols 8 :input-lines 5)
+```
+
+| パラメータ | デフォルト | 説明 |
+|-----------|---------|------|
+| `:rows` | 26 | 行数 |
+| `:cols` | 14 | 列数（最大26 = A-Z） |
+| `:input-lines` | 3 | 入力欄の行数 |
+
 ### 操作方法
 
 | キー | 動作 |
 |------|------|
 | 矢印キー | カーソル移動 |
 | クリック | セル選択 |
-| Enter (グリッド) | 編集開始 |
-| Enter (入力欄) | 確定 |
+| Enter (グリッド) | 入力欄へ移動 |
+| Enter (入力欄) | 入力確定 |
+| Shift+Enter | 入力欄内で改行 |
 
 ## 数式の例
 
@@ -102,10 +124,10 @@ sbcl --load quicklisp.lisp
 ### 範囲操作
 
 ```lisp
-=(sum (range A1 A5))    ; A1:A5の合計
-=(avg (range A1 A10))   ; 平均
+=(sum (range A1 A10))   ; A1:A10の合計
+=(avg (range A1 A26))   ; 平均
 =(+ (range A1 A5))      ; sumと同じ
-=(max (range B1 B10))   ; 最大値
+=(max (range B1 B26))   ; 最大値
 ```
 
 ### リスト操作
@@ -128,6 +150,10 @@ sbcl --load quicklisp.lisp
 ; セル参照と組み合わせ（A1にリストがある場合）
 =(mapcar (lambda (x) (* x x)) A1)
 
+; 直接呼び出し
+=((lambda (x) (+ x 1)) 10)
+; → 11
+
 ; フィルタ：10より大きい値を抽出
 =(remove-if-not (lambda (x) (> x 10)) '(5 15 8 20))
 ; → (15 20)
@@ -135,10 +161,28 @@ sbcl --load quicklisp.lisp
 ; 偶数をカウント
 =(count-if (lambda (x) (evenp x)) '(1 2 3 4 5 6))
 ; → 3
+```
 
-; カスタムreduce
-=(reduce (lambda (a b) (+ a b)) '(1 2 3 4 5))
+### apply と funcall
+
+```lisp
+; リストに関数を適用
+=(apply #'+ '(1 2 3 4 5))
 ; → 15
+
+=(apply #'max '(3 1 4 1 5 9))
+; → 9
+
+; lambdaと組み合わせ
+=(apply (lambda (x y z) (+ x y z)) '(1 2 3))
+; → 6
+
+; funcall
+=(funcall #'+ 1 2 3)
+; → 6
+
+=(funcall (lambda (x) (* x x)) 5)
+; → 25
 ```
 
 ### 高階関数
@@ -161,13 +205,6 @@ sbcl --load quicklisp.lisp
   (t :positive))
 ```
 
-### 文字列操作
-
-```lisp
-=(string-upcase "hello")               ; → "HELLO"
-=(concatenate 'string "Hello" "World") ; → "HelloWorld"
-```
-
 ## 使用可能な関数
 
 ### 算術
@@ -177,7 +214,7 @@ sbcl --load quicklisp.lisp
 `car` `cdr` `cons` `list` `first` `rest` `last` `append` `reverse` `length` `nth` `member` `assoc` `subseq` `butlast`
 
 ### 高階関数
-`mapcar` `reduce` `remove-if` `remove-if-not` `count-if` `lambda`
+`mapcar` `reduce` `remove-if` `remove-if-not` `count-if` `lambda` `apply` `funcall`
 
 ### 述語
 `atom` `listp` `numberp` `stringp` `symbolp` `null` `zerop` `plusp` `minusp` `evenp` `oddp`
@@ -201,50 +238,47 @@ sbcl --load quicklisp.lisp
 | 薄黄 | 文字列 | `"text"` |
 | 水色 | 選択中 | 現在位置 |
 
-## アーキテクチャ
+## 仕様
 
-```
-┌──────────────────────────────────────────┐
-│              GUI (LTK/Tk)                │
-│  Entry (数式入力) + Canvas (グリッド)    │
-├──────────────────────────────────────────┤
-│             数式評価エンジン              │
-│  - S式パーサー                           │
-│  - lambda式とクロージャ                  │
-│  - セル参照解決                          │
-│  - 80以上の純粋関数                      │
-├──────────────────────────────────────────┤
-│              データモデル                 │
-│  ハッシュテーブル: "A1" → (値 . 数式)    │
-│  値: 任意のLispオブジェクト              │
-└──────────────────────────────────────────┘
-```
+| 項目 | デフォルト | 範囲 |
+|------|---------|------|
+| 行数 | 26 | 1-999 |
+| 列数 | 14 | 1-26 (A-Z) |
+| 入力欄行数 | 3 | 1-10 |
+| セルサイズ | 100 × 24 px | - |
+| 数式プレフィックス | `=` | - |
 
 ## ファイル構成
 
 ```
-├── README.md              ; 英語
-├── README-JP.md           ; 日本語
-├── LICENSE                ; MIT
+├── README.md
+├── README-JP.md
+├── LICENSE
 ├── .gitignore
-├── spreadsheet-gui.lisp   ; 最新版
-└── spreadsheet-gui-v0.2.lisp
+├── spreadsheet-gui.lisp      ; 最新版
+├── spreadsheet-gui-v0.1.lisp
+├── spreadsheet-gui-v0.2.lisp
+└── spreadsheet-gui-v0.3.lisp
 ```
 
 ## バージョン履歴
 
-### v0.2（現在）
+### v0.3（現在）
+- 起動パラメータ: rows, cols, input-lines
+- 複数行入力欄
+- Enterで確定、Shift+Enterで改行
+- apply / funcall サポート
+
+### v0.2
 - lambda式サポート
 - lambdaでのセル参照
 - テキストはみ出し表示
 - 80以上のLisp関数
-- 型別の背景色
 
 ### v0.1
 - 基本的な表計算機能
 - 四則演算
 - 範囲指定
-- sum, avg, max, min
 
 ## ライセンス
 
