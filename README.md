@@ -1,63 +1,64 @@
 # Spreadsheet GUI
 
-A simple spreadsheet application built with Common Lisp and LTK (Lisp Toolkit)
+A Lisp-powered spreadsheet application built with Common Lisp and LTK
 
-![Version](https://img.shields.io/badge/version-0.1-blue.svg)
+![Version](https://img.shields.io/badge/version-0.2-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
 [日本語版 README](README-JP.md)
 
+## Overview
+
+A unique spreadsheet where formulas are written in Lisp S-expressions. Cells can hold any Lisp value including numbers, lists, symbols, and strings. Supports lambda expressions for powerful data transformations.
+
 ## Screenshot
 
 ```
-┌─────────────────────────────────────────────────────┐
-│ =(sum (range A1 A4))                                │
-├────┬────────┬────────┬────────┬────────┬────────────┤
-│    │   A    │   B    │   C    │   D    │   ...      │
-├────┼────────┼────────┼────────┼────────┼────────────┤
-│  1 │  10    │  20    │        │        │            │
-│  2 │  20    │        │        │        │            │
-│  3 │  11    │        │        │        │            │
-│  4 │  12    │        │        │        │            │
-│  5 │ [53]   │        │        │        │            │
-│... │        │        │        │        │            │
-└────┴────────┴────────┴────────┴────────┴────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│ =(mapcar (lambda (x) (* x x)) A1)                                   │
+├────┬────────────┬────────────────────────┬──────────┬───────────────┤
+│    │     A      │           B            │    C     │      D        │
+├────┼────────────┼────────────────────────┼──────────┼───────────────┤
+│  1 │ (1 2 3 4 5)│ (1 4 9 16 25)          │          │               │
+│  2 │     10     │ Hello, World!                     │               │
+│  3 │     20     │                        │          │               │
+│  4 │     30     │                        │          │               │
+└────┴────────────┴────────────────────────┴──────────┴───────────────┘
+       (list/green) (list/green)            
+       
+* Long text overflows into empty cells on the right
+* Background colors indicate value types
 ```
 
 ## Features
 
-- **S-expression formulas** - Use Lisp syntax directly for calculations
-- **Cell references** - Reference cells with symbols like `A1`, `B2`
-- **Range selection** - Select ranges with `(range A1 A5)`
-- **Aggregate functions** - `sum`, `avg`, `max`, `min`, `count`
-- **GUI interaction** - Navigate with arrow keys and mouse clicks
+- **S-expression formulas** - Full Lisp syntax for calculations
+- **Lambda expressions** - `(lambda (x) ...)` for custom transformations
+- **Any Lisp value** - Numbers, lists, symbols, strings, keywords in cells
+- **Cell references in lambda** - `(mapcar (lambda (x) (* x x)) A1)`
+- **Text overflow** - Long content extends into empty adjacent cells
+- **Visual type hints** - Background colors by value type
+- **80+ pure functions** - Whitelisted non-destructive Lisp functions
 
 ## Requirements
 
 - **SBCL** (Steel Bank Common Lisp)
 - **Quicklisp**
-- **LTK** (Lisp Toolkit - Tk bindings)
-- **Tcl/Tk** 8.5 or later
+- **LTK** (Lisp Toolkit)
+- **Tcl/Tk** 8.5+
 
 ## Installation
 
-### 1. Install SBCL
-
 ```bash
+# 1. Install SBCL
 # Ubuntu/Debian
-sudo apt install sbcl
+sudo apt install sbcl tk
 
-# macOS (Homebrew)
-brew install sbcl
+# macOS
+brew install sbcl tcl-tk
 
-# Windows
-# Download from https://www.sbcl.org/platform-table.html
-```
-
-### 2. Install Quicklisp
-
-```bash
+# 2. Install Quicklisp
 curl -O https://beta.quicklisp.org/quicklisp.lisp
 sbcl --load quicklisp.lisp
 ```
@@ -68,22 +69,7 @@ sbcl --load quicklisp.lisp
 (quit)
 ```
 
-### 3. Install Tcl/Tk
-
-```bash
-# Ubuntu/Debian
-sudo apt install tk
-
-# macOS (Homebrew)
-brew install tcl-tk
-
-# Windows
-# Tcl/Tk is usually pre-installed
-```
-
 ## Usage
-
-### Starting the Application
 
 ```lisp
 (load "spreadsheet-gui.lisp")
@@ -92,119 +78,173 @@ brew install tcl-tk
 
 ### Controls
 
-| Key/Action | Description |
-|------------|-------------|
-| `Arrow keys` | Move between cells |
-| `Click` | Select a cell |
-| `Enter` (on grid) | Focus on input field |
-| `Enter` (on input) | Confirm input |
+| Key | Action |
+|-----|--------|
+| Arrow keys | Move cursor |
+| Click | Select cell |
+| Enter (grid) | Edit cell |
+| Enter (input) | Confirm |
 
-### Formula Syntax
+## Formula Examples
 
-Formulas start with `=` and use S-expression syntax.
+All formulas start with `=`
 
-#### Basic Operations
-
-```lisp
-=(+ A1 B1)        ; A1 + B1
-=(- A1 B1)        ; A1 - B1
-=(* A1 2)         ; A1 × 2
-=(/ A1 B1)        ; A1 ÷ B1
-```
-
-#### Aggregate Functions
+### Basic Arithmetic
 
 ```lisp
-=(sum A1 B1 C1)   ; Sum
-=(avg A1 B1 C1)   ; Average
-=(max A1 B1 C1)   ; Maximum
-=(min A1 B1 C1)   ; Minimum
-=(count A1 B1 C1) ; Count
+=(+ A1 B1)           ; Add
+=(* A1 2)            ; Multiply
+=(sqrt 2)            ; → 1.4142
+=(expt 2 10)         ; → 1024
+=(* pi 2)            ; → 6.2831
 ```
 
-#### Range Selection
+### Range Operations
 
 ```lisp
-=(sum (range A1 A5))    ; Sum of A1 to A5 (vertical)
-=(sum (range A1 C1))    ; Sum of A1 to C1 (horizontal)
-=(sum (range A1 C3))    ; Sum of rectangular range
-=(avg (range A1 A10))   ; Average of range
+=(sum (range A1 A5))    ; Sum of A1:A5
+=(avg (range A1 A10))   ; Average
+=(+ (range A1 A5))      ; Same as sum
+=(max (range B1 B10))   ; Maximum
 ```
 
-#### Nested Expressions
+### List Operations
 
 ```lisp
-=(+ (sum (range A1 A5)) B1)   ; Range sum + single cell
-=(* (avg (range A1 A3)) 2)    ; Average × 2
+=(list 1 2 3 4 5)       ; → (1 2 3 4 5)
+=(reverse '(a b c))     ; → (C B A)
+=(append '(1 2) '(3 4)) ; → (1 2 3 4)
+=(length '(1 2 3))      ; → 3
+=(nth 2 '(a b c d))     ; → C
 ```
+
+### Lambda Expressions
+
+```lisp
+; Square each element
+=(mapcar (lambda (x) (* x x)) '(1 2 3 4 5))
+; → (1 4 9 16 25)
+
+; With cell reference (A1 contains a list)
+=(mapcar (lambda (x) (* x x)) A1)
+
+; Filter: keep values > 10
+=(remove-if-not (lambda (x) (> x 10)) '(5 15 8 20))
+; → (15 20)
+
+; Count even numbers
+=(count-if (lambda (x) (evenp x)) '(1 2 3 4 5 6))
+; → 3
+
+; Custom reduce
+=(reduce (lambda (a b) (+ a b)) '(1 2 3 4 5))
+; → 15
+```
+
+### Higher-Order Functions
+
+```lisp
+=(mapcar #'1+ '(1 2 3))              ; → (2 3 4)
+=(reduce #'* '(1 2 3 4 5))           ; → 120
+=(remove-if #'evenp '(1 2 3 4 5))    ; → (1 3 5)
+=(remove-if-not #'plusp '(-1 0 1 2)) ; → (1 2)
+```
+
+### Conditionals
+
+```lisp
+=(if (> A1 10) :big :small)
+
+=(cond
+  ((< A1 0) :negative)
+  ((= A1 0) :zero)
+  (t :positive))
+```
+
+### String Operations
+
+```lisp
+=(string-upcase "hello")               ; → "HELLO"
+=(concatenate 'string "Hello" "World") ; → "HelloWorld"
+```
+
+## Allowed Functions
+
+### Arithmetic
+`+` `-` `*` `/` `mod` `rem` `1+` `1-` `abs` `max` `min` `sqrt` `expt` `log` `exp` `sin` `cos` `tan` `floor` `ceiling` `round` `gcd` `lcm`
+
+### List
+`car` `cdr` `cons` `list` `first` `rest` `last` `append` `reverse` `length` `nth` `member` `assoc` `subseq` `butlast`
+
+### Higher-Order
+`mapcar` `reduce` `remove-if` `remove-if-not` `count-if` `lambda`
+
+### Predicates
+`atom` `listp` `numberp` `stringp` `symbolp` `null` `zerop` `plusp` `minusp` `evenp` `oddp`
+
+### Comparison
+`=` `/=` `<` `>` `<=` `>=` `equal`
+
+### String
+`string-upcase` `string-downcase` `concatenate` `subseq`
+
+### Special
+`if` `cond` `and` `or` `quote` `range` `sum` `avg` `count`
+
+## Cell Value Types & Colors
+
+| Color | Type | Example |
+|-------|------|---------|
+| White | Number | `42` |
+| Light Green | List | `(1 2 3)` |
+| Light Pink | Symbol | `HELLO` |
+| Light Yellow | String | `"text"` |
+| Light Blue | Selected | current |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    GUI (LTK/Tk)                     │
-│  ┌──────────────┐  ┌─────────────────────────────┐  │
-│  │    Entry     │  │          Canvas             │  │
-│  │(formula input)│  │    (cell grid display)     │  │
-│  └──────────────┘  └─────────────────────────────┘  │
-├─────────────────────────────────────────────────────┤
-│                  Event Handling                     │
-│       Key input / Mouse click / Enter confirm       │
-├─────────────────────────────────────────────────────┤
-│                 Formula Evaluation                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌────────────┐  │
-│  │ eval-formula│  │ expand-range│  │ cell-ref-p │  │
-│  │(S-exp eval) │  │(range expand)│ │(ref check) │  │
-│  └─────────────┘  └─────────────┘  └────────────┘  │
-├─────────────────────────────────────────────────────┤
-│                    Data Model                       │
-│   *sheet* (hash-table: cell-name → cell struct)     │
-│   cell: value (display) + formula (S-expression)    │
-└─────────────────────────────────────────────────────┘
-```
-
-## Configuration
-
-Configurable parameters at the top of `spreadsheet-gui.lisp`:
-
-```lisp
-(defparameter *rows* 20)       ; Number of rows
-(defparameter *cols* 10)       ; Number of columns
-(defparameter *cell-w* 80)     ; Cell width (px)
-(defparameter *cell-h* 24)     ; Cell height (px)
+┌──────────────────────────────────────────┐
+│              GUI (LTK/Tk)                │
+│  Entry (formula) + Canvas (grid)         │
+├──────────────────────────────────────────┤
+│           Formula Evaluator              │
+│  - S-expression parser                   │
+│  - Lambda with closure support           │
+│  - Cell reference resolution             │
+│  - 80+ whitelisted pure functions        │
+├──────────────────────────────────────────┤
+│             Data Model                   │
+│  Hash table: "A1" → (value . formula)    │
+│  Values: Any Lisp object                 │
+└──────────────────────────────────────────┘
 ```
 
 ## File Structure
 
 ```
-.
-├── README.md                 ; English documentation
-├── README-JP.md              ; Japanese documentation
-├── LICENSE
+├── README.md              ; English
+├── README-JP.md           ; Japanese
+├── LICENSE                ; MIT
 ├── .gitignore
-├── spreadsheet-gui.lisp      ; Main file (latest)
-└── spreadsheet-gui-v0.1.lisp ; v0.1 archive
+├── spreadsheet-gui.lisp   ; Latest
+└── spreadsheet-gui-v0.2.lisp
 ```
 
-## Roadmap
+## Version History
 
-### v0.2 (Planned)
+### v0.2 (Current)
+- Lambda expression support
+- Cell references in lambda
+- Text overflow display
+- 80+ Lisp functions
+- Type-based cell coloring
 
-- [ ] File save/load
-- [ ] Copy & paste cells
-- [ ] Undo/Redo
-
-### v0.3 (Planned)
-
-- [ ] Column width adjustment
-- [ ] Cell formatting
-- [ ] Conditional formatting
-
-### Future
-
-- [ ] Charts
-- [ ] CSV import/export
-- [ ] Macro functionality
+### v0.1
+- Basic spreadsheet
+- Four arithmetic operations
+- Range selection
+- sum, avg, max, min
 
 ## License
 
@@ -213,13 +253,3 @@ MIT License
 ## Author
 
 Fukuyori
-
-## Contributing
-
-Issues and Pull Requests are welcome.
-
-## References
-
-- [LTK Manual](http://www.peter-herth.de/ltk/ltkdoc/)
-- [SBCL Manual](http://www.sbcl.org/manual/)
-- [Common Lisp HyperSpec](http://www.lispworks.com/documentation/HyperSpec/Front/)
