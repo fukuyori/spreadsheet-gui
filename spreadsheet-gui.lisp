@@ -2,7 +2,7 @@
 ;;;; spreadsheet-gui.lisp
 ;;;; Common Lisp + LTK で作るシンプルな表計算ソフト
 ;;;; 
-;;;; Version: 0.5
+;;;; Version: 0.5.1
 ;;;; Date: 2025-01-15
 ;;;; 
 ;;;; 機能:
@@ -1496,7 +1496,7 @@
            :format-version 1
            :metadata (:created ,(iso-timestamp)
                       :modified ,(iso-timestamp)
-                      :app-version "0.5")
+                      :app-version "0.5.1")
            :grid (:rows ,*rows* :cols ,*cols*)
            :cells ,cells-data)
          out)
@@ -2487,7 +2487,7 @@
 
 (defun update-window-title ()
   "ウィンドウタイトルを更新"
-  (wm-title *tk* (format nil "Spreadsheet v0.5 [~Dx~D]~a" 
+  (wm-title *tk* (format nil "Spreadsheet v0.5.1 [~Dx~D]~a" 
                          *cols* *rows*
                          (if *current-file* 
                              (format nil " - ~a" (file-namestring *current-file*))
@@ -2514,8 +2514,12 @@
   (with-ltk ()
     (update-window-title)
     
+    ;; 垂直分割用のPanedWindowをTclコマンドで作成
+    (format-wish "ttk::panedwindow .paned -orient vertical")
+    
     ;; ウィジェット作成
-    (let* ((input-frame (make-instance 'frame))
+    (let* (;; 入力エリア用フレーム（.paned配下）
+           (input-frame (make-instance 'frame))
            ;; 複数行入力用Textウィジェット（固定幅フォント）
            (input-text (make-instance 'text
                                       :master input-frame
@@ -2525,7 +2529,10 @@
            (input-scroll (make-instance 'scrollbar 
                                         :master input-frame
                                         :orientation :vertical))
+           ;; スプレッドシート用フレーム
+           (canvas-frame (make-instance 'frame))
            (canvas (make-instance 'canvas
+                                  :master canvas-frame
                                   :width (total-width)
                                   :height (total-height)))
            ;; メニューバー
@@ -2786,11 +2793,17 @@
       (format-wish "~a configure -tabs [list [expr {[font measure TkFixedFont 0] * 4}]]" 
                    (widget-path input-text))
       
-      ;; レイアウト
-      (pack input-frame :fill :x :padx 2 :pady 2)
+      ;; レイアウト - 入力フレーム内
       (pack input-scroll :side :right :fill :y)
       (pack input-text :side :left :fill :both :expand t)
-      (pack canvas)
+      ;; レイアウト - キャンバスフレーム内
+      (pack canvas :fill :both :expand t)
+      
+      ;; PanedWindowにペインを追加
+      (format-wish ".paned add ~a -weight 0" (widget-path input-frame))
+      (format-wish ".paned add ~a -weight 1" (widget-path canvas-frame))
+      ;; PanedWindowをパック
+      (format-wish "pack .paned -fill both -expand true -padx 2 -pady 2")
 
       ;; 初期描画
       (update-text-input input-text)
@@ -3210,7 +3223,7 @@
       (focus canvas))))
 
 ;;; ロード時メッセージ
-(format t "~%=== Spreadsheet GUI v0.5 ===~%")
+(format t "~%=== Spreadsheet GUI v0.5.1 ===~%")
 (format t "Lisp Powered Edition~%~%")
 (format t "起動: (ss-gui:start)~%")
 (format t "~%基本操作:~%")
@@ -3233,4 +3246,4 @@
 (format t "  Ctrl+N            : 新規作成~%")
 (format t "  Ctrl+O            : ファイルを開く~%")
 (format t "  Ctrl+S            : 保存~%")
-(format t "~%v0.5 新機能: 列幅/行高さ調整、行/列の挿入/削除~%")
+(format t "~%v0.5.1 新機能: 入力枠リサイズ、数式参照自動更新、固定幅フォント~%")

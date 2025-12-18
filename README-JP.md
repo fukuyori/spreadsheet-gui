@@ -2,7 +2,7 @@
 
 Common LispとLTKで構築されたLisp式表計算アプリケーション
 
-![Version](https://img.shields.io/badge/version-0.5-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.1-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -327,7 +327,12 @@ ss-gui:*current-file*
 
 ## バージョン履歴
 
-### v0.5（現在）
+### v0.5.1（現在）
+- 入力枠のリサイズ可能（境界線をドラッグ）
+- 入力枠に固定幅フォントを使用
+- タブ幅を4文字に設定
+
+### v0.5
 - 行・列の挿入・削除時の**数式参照の自動更新**
   - 絶対参照 (A1, B2など)
   - 相対参照 (rel row-offset col-offset)

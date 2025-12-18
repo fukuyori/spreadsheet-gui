@@ -2,7 +2,7 @@
 
 A Lisp-powered spreadsheet application built with Common Lisp and LTK
 
-![Version](https://img.shields.io/badge/version-0.5-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.1-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -327,7 +327,12 @@ The `.ssp` format is a human-readable S-expression format:
 
 ## Version History
 
-### v0.5 (Current)
+### v0.5.1 (Current)
+- Resizable input area (drag the border between input and spreadsheet)
+- Fixed-width font for input area
+- Tab width set to 4 characters
+
+### v0.5
 - **Smart formula reference updates** on row/column insert/delete
   - Absolute references (A1, B2, etc.)
   - Relative references (rel row-offset col-offset)
