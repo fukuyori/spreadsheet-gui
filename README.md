@@ -2,7 +2,7 @@
 
 A Lisp-powered spreadsheet application built with Common Lisp and LTK
 
-![Version](https://img.shields.io/badge/version-0.4.1-blue.svg)
+![Version](https://img.shields.io/badge/version-0.4.2-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -109,9 +109,9 @@ sbcl --load quicklisp.lisp
 |-----|--------|
 | Enter | Confirm → Move down |
 | Ctrl+Enter | Confirm → Stay |
-| Shift+Enter | Confirm → Move right |
-| Ctrl+Shift+Enter | Confirm → Move left |
-| Alt+Enter | Newline in formula |
+| Shift+Enter | Newline in input |
+| Alt+Enter | Confirm → Move right |
+| Shift+Alt+Enter | Confirm → Move left |
 
 ### Edit Operations
 
@@ -294,7 +294,7 @@ When A1 changes to 20:
 
 ## Version History
 
-### v0.4.1 (Current)
+### v0.4.2 (Current)
 - Number right-alignment in cells
 - File menu with save/load (.ssp format)
 - Edit menu with Undo/Redo/Cut/Copy/Paste

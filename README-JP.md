@@ -2,7 +2,7 @@
 
 Common Lisp + LTK で作るシンプルな表計算ソフト
 
-![Version](https://img.shields.io/badge/version-0.4.1-blue.svg)
+![Version](https://img.shields.io/badge/version-0.4.2-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -109,9 +109,9 @@ sbcl --load quicklisp.lisp
 |------|------|
 | Enter | 確定 → 下に移動 |
 | Ctrl+Enter | 確定 → そのまま |
-| Shift+Enter | 確定 → 右に移動 |
-| Ctrl+Shift+Enter | 確定 → 左に移動 |
-| Alt+Enter | 数式内で改行 |
+| Shift+Enter | 入力欄で改行 |
+| Alt+Enter | 確定 → 右に移動 |
+| Shift+Alt+Enter | 確定 → 左に移動 |
 
 ### 編集操作
 
@@ -294,7 +294,7 @@ A1を20に変更すると:
 
 ## バージョン履歴
 
-### v0.4.1（現在）
+### v0.4.2（現在）
 - 数値の右寄せ表示
 - ファイルメニュー（保存/読み込み、.ssp形式）
 - 編集メニュー（Undo/Redo/切り取り/コピー/貼り付け）

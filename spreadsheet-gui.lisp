@@ -2,7 +2,7 @@
 ;;;; spreadsheet-gui.lisp
 ;;;; Common Lisp + LTK で作るシンプルな表計算ソフト
 ;;;; 
-;;;; Version: 0.4.1
+;;;; Version: 0.4.2
 ;;;; Date: 2025-01-15
 ;;;; 
 ;;;; 機能:
@@ -803,7 +803,7 @@
            :format-version 1
            :metadata (:created ,(iso-timestamp)
                       :modified ,(iso-timestamp)
-                      :app-version "0.4.1")
+                      :app-version "0.4.2")
            :grid (:rows ,*rows* :cols ,*cols*)
            :cells ,cells-data)
          out)
@@ -1718,7 +1718,7 @@
 
 (defun update-window-title ()
   "ウィンドウタイトルを更新"
-  (wm-title *tk* (format nil "Spreadsheet v0.4.1 [~Dx~D]~a" 
+  (wm-title *tk* (format nil "Spreadsheet v0.4.2 [~Dx~D]~a" 
                          *cols* *rows*
                          (if *current-file* 
                              (format nil " - ~a" (file-namestring *current-file*))
@@ -2017,15 +2017,15 @@
               (commit-and-move input-text canvas :stay)
               (focus canvas)))
       
-      ;; Shift+Enter → 確定して右に移動
-      (bind input-text "<Shift-Return>"
+      ;; Alt+Enter → 確定して右に移動
+      (bind input-text "<Alt-Return>"
             (lambda (evt)
               (declare (ignore evt))
               (commit-and-move input-text canvas :right)
               (focus canvas)))
       
-      ;; Ctrl+Shift+Enter → 確定して左に移動
-      (bind input-text "<Control-Shift-Return>"
+      ;; Shift+Alt+Enter → 確定して左に移動
+      (bind input-text "<Shift-Alt-Return>"
             (lambda (evt)
               (declare (ignore evt))
               (commit-and-move input-text canvas :left)
@@ -2042,11 +2042,11 @@
       (let ((path (widget-path input-text)))
         (format-wish "bind ~a <Return> \"[bind ~a <Return>]; break\"" path path)
         (format-wish "bind ~a <Control-Return> \"[bind ~a <Control-Return>]; break\"" path path)
-        (format-wish "bind ~a <Shift-Return> \"[bind ~a <Shift-Return>]; break\"" path path)
-        (format-wish "bind ~a <Control-Shift-Return> \"[bind ~a <Control-Shift-Return>]; break\"" path path)
+        (format-wish "bind ~a <Alt-Return> \"[bind ~a <Alt-Return>]; break\"" path path)
+        (format-wish "bind ~a <Shift-Alt-Return> \"[bind ~a <Shift-Alt-Return>]; break\"" path path)
         (format-wish "bind ~a <Escape> \"[bind ~a <Escape>]; break\"" path path)
-        ;; Alt+Enter で改行（数式内で改行したい場合）
-        (format-wish "bind ~a <Alt-Return> {~a insert insert \\n; break}" path path))
+        ;; Shift+Enter で改行
+        (format-wish "bind ~a <Shift-Return> {~a insert insert \\n; break}" path path))
 
       ;; セルクリック → 選択開始
       (bind canvas "<ButtonPress-1>"
@@ -2251,7 +2251,7 @@
       (focus canvas))))
 
 ;;; ロード時メッセージ
-(format t "~%=== Spreadsheet GUI v0.4.1 ===~%")
+(format t "~%=== Spreadsheet GUI v0.4.2 ===~%")
 (format t "Lisp Powered Edition~%~%")
 (format t "起動: (ss-gui:start)~%")
 (format t "~%基本操作:~%")
@@ -2267,11 +2267,11 @@
 (format t "~%入力確定:~%")
 (format t "  Enter             : 確定→下に移動~%")
 (format t "  Ctrl+Enter        : 確定→そのまま~%")
-(format t "  Shift+Enter       : 確定→右に移動~%")
-(format t "  Ctrl+Shift+Enter  : 確定→左に移動~%")
-(format t "  Alt+Enter         : 入力欄で改行~%")
+(format t "  Shift+Enter       : 入力欄で改行~%")
+(format t "  Alt+Enter         : 確定→右に移動~%")
+(format t "  Shift+Alt+Enter   : 確定→左に移動~%")
 (format t "~%ファイル操作:~%")
 (format t "  Ctrl+N            : 新規作成~%")
 (format t "  Ctrl+O            : ファイルを開く~%")
 (format t "  Ctrl+S            : 保存~%")
-(format t "~%v0.4.1 機能: Undo/Redo、ファイルメニュー、CSV入出力~%")
+(format t "~%v0.4.2 機能: Undo/Redo、ファイルメニュー、CSV入出力~%")
