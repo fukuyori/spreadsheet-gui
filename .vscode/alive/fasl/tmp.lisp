@@ -2,7 +2,7 @@
 ;;;; spreadsheet-gui.lisp
 ;;;; Common Lisp + LTK で作るシンプルな表計算ソフト
 ;;;; 
-;;;; Version: 0.3.1
+;;;; Version: 0.4
 ;;;; Date: 2025-01-15
 ;;;; 
 ;;;; 機能:
@@ -15,6 +15,8 @@
 ;;;;   - 自動再計算（依存関係追跡）
 ;;;;   - 範囲選択、コピー＆ペースト
 ;;;;   - システムクリップボード対応（TSV形式）
+;;;;   - ファイル保存/読み込み (.ssp形式)
+;;;;   - CSV エクスポート/インポート
 ;;;;   - 条件分岐 (if ...) (cond ...)
 ;;;;   - 矢印キー・クリックでセル移動
 ;;;; 
@@ -29,7 +31,15 @@
 
 (defpackage :ss-gui
   (:use :cl :ltk)
-  (:export :start :show-dependencies :show-cell-deps))
+  (:export :start 
+           :show-dependencies :show-cell-deps
+           ;; ファイル操作
+           :save :load-file :new-sheet
+           :export-csv :import-csv
+           ;; Undo/Redo
+           :undo :redo :clear-history
+           ;; 現在のファイル
+           :*current-file*))
 (in-package :ss-gui)
 
 ;;;; =========================
@@ -65,6 +75,14 @@
 ;; 依存関係グラフ
 (defparameter *refs* (make-hash-table :test 'equal))       ; セル→参照先リスト
 (defparameter *dependents* (make-hash-table :test 'equal)) ; セル→依存元リスト
+
+;; Undo/Redo スタック
+(defparameter *undo-stack* nil)       ; Undo用スタック
+(defparameter *redo-stack* nil)       ; Redo用スタック
+(defparameter *max-undo-history* 100) ; 最大履歴数
+
+;; 現在のファイル
+(defparameter *current-file* nil)  ; 現在開いているファイルのパス
 
 ;;;; =========================
 ;;;; データモデル
@@ -146,7 +164,9 @@
   "クリップボードの内容をカーソル位置にペースト"
   (when *clipboard*
     (let ((idx 0)
-          (pasted-cells nil))
+          (pasted-cells nil)
+          (before-snapshots nil)
+          (after-snapshots nil))
       ;; まず全てのセルに値と数式を設定
       (loop for dy from 0 below *clipboard-rows* do
         (loop for dx from 0 below *clipboard-cols* do
@@ -157,6 +177,8 @@
                      (cell (get-cell name))
                      (data (nth idx *clipboard*))
                      (formula (second data)))
+                ;; 変更前の状態を保存
+                (push (make-cell-snapshot name) before-snapshots)
                 ;; 数式がある場合は再評価
                 (if formula
                     (progn
@@ -172,15 +194,22 @@
                       (setf (cell-value cell) (first data)
                             (cell-formula cell) nil)
                       (update-dependencies name nil)))
+                ;; 変更後の状態を保存
+                (push (make-cell-snapshot name) after-snapshots)
                 (push name pasted-cells))))
           (incf idx)))
+      ;; Undo履歴に記録
+      (when pasted-cells
+        (record-multi-change (nreverse before-snapshots) (nreverse after-snapshots)))
       ;; 貼り付けたセルの依存元を再計算
       (dolist (name (nreverse pasted-cells))
         (recalc-dependents name)))))
 
 (defun clear-selection-cells ()
   "選択範囲のセルをクリア（NILを設定）し、依存元を再計算"
-  (let ((cleared-cells nil))
+  (let ((cleared-cells nil)
+        (before-snapshots nil)
+        (after-snapshots nil))
     (if (has-selection-p)
         ;; 範囲選択がある場合
         (multiple-value-bind (min-x min-y max-x max-y) (selection-bounds)
@@ -188,17 +217,26 @@
             (loop for x from min-x to max-x do
               (let* ((name (cell-name x y))
                      (cell (get-cell name)))
+                ;; 変更前の状態を保存
+                (push (make-cell-snapshot name) before-snapshots)
                 (setf (cell-value cell) nil
                       (cell-formula cell) nil)
                 (update-dependencies name nil)
+                ;; 変更後の状態を保存
+                (push (make-cell-snapshot name) after-snapshots)
                 (push name cleared-cells)))))
         ;; 範囲選択がない場合はカーソル位置のみ
         (let* ((name (cell-name *cur-x* *cur-y*))
                (cell (get-cell name)))
+          (push (make-cell-snapshot name) before-snapshots)
           (setf (cell-value cell) nil
                 (cell-formula cell) nil)
           (update-dependencies name nil)
+          (push (make-cell-snapshot name) after-snapshots)
           (push name cleared-cells)))
+    ;; Undo履歴に記録
+    (when cleared-cells
+      (record-multi-change (nreverse before-snapshots) (nreverse after-snapshots)))
     ;; 全ての削除されたセルの依存元を再計算
     (dolist (name cleared-cells)
       (recalc-dependents name))))
@@ -283,7 +321,9 @@
 (defun paste-from-system-clipboard ()
   "システムクリップボードから貼り付け"
   (let ((text (get-system-clipboard))
-        (pasted-cells nil))
+        (pasted-cells nil)
+        (before-snapshots nil)
+        (after-snapshots nil))
     (when (and text (> (length text) 0))
       ;; 行で分割
       (let* ((lines (split-string text #\Newline))
@@ -298,6 +338,8 @@
             ;; 単一値の場合
             (let* ((name (cell-name *cur-x* *cur-y*))
                    (cell (get-cell name)))
+              ;; 変更前の状態を保存
+              (push (make-cell-snapshot name) before-snapshots)
               ;; 評価位置を設定
               (setf *eval-col* *cur-x* *eval-row* *cur-y*)
               (multiple-value-bind (val form) 
@@ -307,6 +349,8 @@
                 (if form
                     (update-dependencies name (extract-references form *cur-y* *cur-x*))
                     (update-dependencies name nil))
+                ;; 変更後の状態を保存
+                (push (make-cell-snapshot name) after-snapshots)
                 (push name pasted-cells)))
             ;; 複数セル（TSV形式）の場合
             (loop for line in lines
@@ -318,6 +362,8 @@
                   (when (and (< x *cols*) (< y *rows*))
                     (let* ((name (cell-name x y))
                            (cell (get-cell name)))
+                      ;; 変更前の状態を保存
+                      (push (make-cell-snapshot name) before-snapshots)
                       ;; 評価位置を設定
                       (setf *eval-col* x *eval-row* y)
                       (multiple-value-bind (val form)
@@ -327,10 +373,15 @@
                         (if form
                             (update-dependencies name (extract-references form y x))
                             (update-dependencies name nil))
-                        (push name pasted-cells)))))))))
-      ;; 貼り付けたセルの依存元を再計算
-      (dolist (name (nreverse pasted-cells))
-        (recalc-dependents name)))))
+                        ;; 変更後の状態を保存
+                        (push (make-cell-snapshot name) after-snapshots)
+                        (push name pasted-cells))))))))))
+    ;; Undo履歴に記録
+    (when pasted-cells
+      (record-multi-change (nreverse before-snapshots) (nreverse after-snapshots)))
+    ;; 貼り付けたセルの依存元を再計算
+    (dolist (name (nreverse pasted-cells))
+      (recalc-dependents name))))
 
 ;;;; =========================
 ;;;; 位置参照関数
@@ -493,14 +544,10 @@
                   (dolist (e expr)
                     (walk e))))))
       (walk formula))
-    (when refs
-      (format t "  Extract refs from ~S: ~a~%" formula refs))
     refs))
 
 (defun update-dependencies (cell-name new-refs)
   "セルの依存関係を更新"
-  (when new-refs
-    (format t "  Update deps: ~a refs ~a~%" cell-name new-refs))
   (let ((old-refs (gethash cell-name *refs*)))
     ;; 古い参照先から自分を削除
     (dolist (ref old-refs)
@@ -569,11 +616,12 @@
         (setf *eval-col* col *eval-row* row)
         (let ((*eval-stack* (list cell-name)))
           (handler-case
-              (let ((new-val (eval-formula formula)))
-                (format t "  Recalc ~a: ~a → ~a~%" cell-name (cell-value cell) new-val)
-                (setf (cell-value cell) new-val))
+              (setf (cell-value cell) (eval-formula formula))
             (error (e)
-              (setf (cell-value cell) (format nil "ERR: ~a" e)))))))))
+              (let ((msg (princ-to-string e)))
+                (if (search "循環参照" msg)
+                    (setf (cell-value cell) (format-error-message :circular cell-name))
+                    (setf (cell-value cell) (format-error-message :eval msg)))))))))))
 
 (defun parse-cell-name (name)
   "セル名から座標(col row)を取得"
@@ -585,10 +633,6 @@
   "セルに依存する全てのセルを再計算"
   (let* ((deps (collect-all-dependents cell-name))
          (sorted (topological-sort-cells deps)))
-    (when deps
-      (format t "~%Recalc triggered by ~a~%" cell-name)
-      (format t "  Dependents: ~a~%" deps)
-      (format t "  Sorted: ~a~%" sorted))
     (dolist (dep sorted)
       (recalc-cell dep))))
 
@@ -611,6 +655,393 @@
   (format t "  参照先: ~a~%" (gethash cell-name *refs*))
   (format t "  依存元: ~a~%" (gethash cell-name *dependents*))
   (values))
+
+;;;; =========================
+;;;; Undo/Redo 機能
+;;;; =========================
+
+;;; 操作タイプ:
+;;;   :cell-change  - 単一セルの変更
+;;;   :multi-change - 複数セルの変更（ペースト、削除等）
+
+(defun make-cell-snapshot (cell-name)
+  "セルの現在状態をスナップショットとして取得"
+  (let ((cell (get-cell cell-name)))
+    (list :name cell-name
+          :value (cell-value cell)
+          :formula (cell-formula cell))))
+
+(defun restore-cell-snapshot (snapshot)
+  "スナップショットからセルを復元"
+  (let* ((name (getf snapshot :name))
+         (value (getf snapshot :value))
+         (formula (getf snapshot :formula))
+         (cell (get-cell name)))
+    (setf (cell-value cell) value
+          (cell-formula cell) formula)
+    ;; 依存関係を再構築
+    (let ((coords (parse-cell-name name)))
+      (if formula
+          (update-dependencies name 
+                               (extract-references formula 
+                                                   (second coords) 
+                                                   (first coords)))
+          ;; 数式がなくなった場合は依存関係をクリア
+          (update-dependencies name nil)))))
+
+(defun record-cell-change (cell-name old-value old-formula)
+  "単一セルの変更を記録"
+  (let ((action (list :type :cell-change
+                      :before (list :name cell-name
+                                    :value old-value
+                                    :formula old-formula)
+                      :after (make-cell-snapshot cell-name))))
+    (push action *undo-stack*)
+    ;; Redo履歴をクリア
+    (setf *redo-stack* nil)
+    ;; 履歴数制限
+    (when (> (length *undo-stack*) *max-undo-history*)
+      (setf *undo-stack* (butlast *undo-stack*)))))
+
+(defun record-multi-change (before-snapshots after-snapshots)
+  "複数セルの変更を記録"
+  (let ((action (list :type :multi-change
+                      :before before-snapshots
+                      :after after-snapshots)))
+    (push action *undo-stack*)
+    (setf *redo-stack* nil)
+    (when (> (length *undo-stack*) *max-undo-history*)
+      (setf *undo-stack* (butlast *undo-stack*)))))
+
+(defun undo ()
+  "直前の操作を取り消す"
+  (if (null *undo-stack*)
+      (progn
+        (format t "Undo: 履歴がありません~%")
+        nil)
+      (let ((action (pop *undo-stack*)))
+        (push action *redo-stack*)
+        (case (getf action :type)
+          (:cell-change
+           (restore-cell-snapshot (getf action :before))
+           (let ((name (getf (getf action :before) :name)))
+             (recalc-dependents name)))
+          (:multi-change
+           (dolist (snapshot (getf action :before))
+             (restore-cell-snapshot snapshot))
+           ;; 全ての変更セルの依存先を再計算
+           (dolist (snapshot (getf action :before))
+             (recalc-dependents (getf snapshot :name)))))
+        t)))
+
+(defun redo ()
+  "取り消した操作をやり直す"
+  (if (null *redo-stack*)
+      (progn
+        (format t "Redo: 履歴がありません~%")
+        nil)
+      (let ((action (pop *redo-stack*)))
+        (push action *undo-stack*)
+        (case (getf action :type)
+          (:cell-change
+           (restore-cell-snapshot (getf action :after))
+           (let ((name (getf (getf action :after) :name)))
+             (recalc-dependents name)))
+          (:multi-change
+           (dolist (snapshot (getf action :after))
+             (restore-cell-snapshot snapshot))
+           (dolist (snapshot (getf action :after))
+             (recalc-dependents (getf snapshot :name)))))
+        t)))
+
+(defun clear-history ()
+  "Undo/Redo履歴をクリア"
+  (setf *undo-stack* nil
+        *redo-stack* nil)
+  (format t "履歴をクリアしました~%"))
+
+;;;; =========================
+;;;; ファイル保存/読み込み
+;;;; =========================
+
+(defun iso-timestamp ()
+  "ISO 8601形式のタイムスタンプを生成"
+  (multiple-value-bind (sec min hour day month year)
+      (get-decoded-time)
+    (format nil "~4,'0d-~2,'0d-~2,'0dT~2,'0d:~2,'0d:~2,'0d"
+            year month day hour min sec)))
+
+(defun collect-cells-data ()
+  "保存用にセルデータを収集"
+  (let ((cells-data nil))
+    (maphash (lambda (name cell)
+               (when (or (cell-value cell) (cell-formula cell))
+                 (push (if (cell-formula cell)
+                           (list name (cell-value cell) (cell-formula cell))
+                           (list name (cell-value cell)))
+                       cells-data)))
+             *sheet*)
+    (sort cells-data #'string< :key #'first)))
+
+(defun save (filename)
+  "スプレッドシートを.sspファイルに保存"
+  (let ((cells-data (collect-cells-data)))
+    (with-open-file (out filename 
+                         :direction :output 
+                         :if-exists :supersede
+                         :external-format :utf-8)
+      (let ((*print-pretty* t)
+            (*print-right-margin* 80)
+            (*print-case* :downcase))
+        ;; ヘッダーコメント
+        (format out ";;;; -*- mode: lisp; coding: utf-8 -*-~%")
+        (format out ";;;; Spreadsheet GUI File (.ssp)~%")
+        (format out ";;;; Created: ~a~%~%" (iso-timestamp))
+        ;; データ
+        (prin1 
+         `(:spreadsheet
+           :format-version 1
+           :metadata (:created ,(iso-timestamp)
+                      :modified ,(iso-timestamp)
+                      :app-version "0.4")
+           :grid (:rows ,*rows* :cols ,*cols*)
+           :cells ,cells-data)
+         out)
+        (terpri out)))
+    (setf *current-file* filename)
+    (format t "~%Saved: ~a (~d cells)~%" filename (length cells-data))
+    filename))
+
+(defun load-file (filename)
+  "ファイルからスプレッドシートを読み込み"
+  (with-open-file (in filename 
+                      :direction :input
+                      :external-format :utf-8)
+    (let ((data (read in)))
+      ;; 形式チェック
+      (unless (and (listp data) (eq (car data) :spreadsheet))
+        (error "無効なファイル形式: ~a" filename))
+      (let ((version (getf (cdr data) :format-version))
+            (grid (getf (cdr data) :grid))
+            (cells (getf (cdr data) :cells)))
+        ;; バージョンチェック
+        (when (and version (> version 1))
+          (warn "ファイルバージョン ~a は完全にはサポートされていません" version))
+        ;; グリッド設定
+        (when grid
+          (setf *rows* (or (getf grid :rows) *rows*)
+                *cols* (or (getf grid :cols) *cols*)))
+        ;; シートをクリア
+        (setf *sheet* (make-hash-table :test #'equal))
+        (clear-dependencies)
+        ;; Undo/Redo履歴をクリア
+        (setf *undo-stack* nil
+              *redo-stack* nil)
+        ;; セルデータを復元
+        (dolist (cell-data cells)
+          (let* ((name (first cell-data))
+                 (value (second cell-data))
+                 (formula (third cell-data))
+                 (cell (get-cell name)))
+            (setf (cell-value cell) value
+                  (cell-formula cell) formula)
+            ;; 依存関係を再構築
+            (when formula
+              (let ((coords (parse-cell-name name)))
+                (update-dependencies 
+                 name 
+                 (extract-references formula 
+                                    (second coords) 
+                                    (first coords)))))))
+        (setf *current-file* filename)
+        (format t "~%Loaded: ~a (~d cells)~%" filename (length cells))
+        filename))))
+
+(defun new-sheet ()
+  "新規シートを作成（現在のデータをクリア）"
+  (setf *sheet* (make-hash-table :test #'equal))
+  (setf *cur-x* 0 *cur-y* 0)
+  (clear-selection)
+  (setf *clipboard* nil)
+  (clear-dependencies)
+  (setf *current-file* nil)
+  ;; Undo/Redo履歴もクリア
+  (setf *undo-stack* nil
+        *redo-stack* nil)
+  (format t "~%New sheet created~%")
+  t)
+
+;;;; =========================
+;;;; CSV エクスポート/インポート
+;;;; =========================
+
+(defun get-used-range ()
+  "使用されているセル範囲を取得 (min-col min-row max-col max-row)"
+  (let ((min-col (1- *cols*)) (min-row (1- *rows*))
+        (max-col 0) (max-row 0)
+        (has-data nil))
+    (maphash (lambda (name cell)
+               (when (or (cell-value cell) (cell-formula cell))
+                 (setf has-data t)
+                 (let* ((coords (parse-cell-name name))
+                        (col (first coords))
+                        (row (second coords)))
+                   (setf min-col (min min-col col)
+                         min-row (min min-row row)
+                         max-col (max max-col col)
+                         max-row (max max-row row)))))
+             *sheet*)
+    (if has-data
+        (values min-col min-row max-col max-row)
+        (values 0 0 0 0))))
+
+(defun escape-csv-field (str)
+  "CSV用にフィールドをエスケープ"
+  (let ((s (if (stringp str) str (princ-to-string str))))
+    (if (or (find #\, s) 
+            (find #\" s) 
+            (find #\Newline s)
+            (find #\Return s))
+        ;; クォートが必要
+        (format nil "\"~a\"" 
+                (with-output-to-string (out)
+                  (loop for c across s do
+                    (when (char= c #\") (write-char #\" out))
+                    (write-char c out))))
+        s)))
+
+(defun cell-value-for-csv (cell)
+  "セル値をCSV出力用文字列に変換"
+  (let ((val (cell-value cell)))
+    (cond
+      ((null val) "")
+      ((stringp val) val)
+      ((numberp val) (princ-to-string val))
+      ((listp val) (princ-to-string val))
+      ((symbolp val) (symbol-name val))
+      (t (princ-to-string val)))))
+
+(defun export-csv (filename &key (include-header nil) (include-formulas nil))
+  "CSVファイルにエクスポート
+   :include-header   列名ヘッダーを含める（デフォルトnil）
+   :include-formulas 数式を含める（デフォルトnil、値のみ）"
+  (multiple-value-bind (min-col min-row max-col max-row) (get-used-range)
+    (with-open-file (out filename 
+                         :direction :output 
+                         :if-exists :supersede
+                         :external-format :utf-8)
+      ;; ヘッダー行（列名）
+      (when include-header
+        (loop for c from min-col to max-col
+              for first = t then nil do
+          (unless first (write-char #\, out))
+          (write-string (string (code-char (+ (char-code #\A) c))) out))
+        (terpri out))
+      ;; データ行
+      (loop for r from min-row to max-row do
+        (loop for c from min-col to max-col
+              for first = t then nil do
+          (unless first (write-char #\, out))
+          (let* ((cell (get-cell (cell-name c r)))
+                 (text (if (and include-formulas (cell-formula cell))
+                           (format nil "=~S" (cell-formula cell))
+                           (cell-value-for-csv cell))))
+            (write-string (escape-csv-field text) out)))
+        (terpri out)))
+    (format t "~%Exported CSV: ~a~%" filename)
+    filename))
+
+(defun parse-csv-line (line)
+  "CSV行をフィールドのリストにパース"
+  (let ((fields nil)
+        (current (make-array 0 :element-type 'character :adjustable t :fill-pointer 0))
+        (in-quotes nil)
+        (i 0)
+        (len (length line)))
+    (loop while (< i len) do
+      (let ((c (char line i)))
+        (cond
+          ;; クォート開始/終了
+          ((char= c #\")
+           (if in-quotes
+               ;; クォート内で次もクォートならエスケープ
+               (if (and (< (1+ i) len) (char= (char line (1+ i)) #\"))
+                   (progn
+                     (vector-push-extend #\" current)
+                     (incf i))
+                   (setf in-quotes nil))
+               (setf in-quotes t)))
+          ;; カンマ（クォート外）
+          ((and (char= c #\,) (not in-quotes))
+           (push (copy-seq current) fields)
+           (setf (fill-pointer current) 0))
+          ;; その他の文字
+          (t (vector-push-extend c current))))
+      (incf i))
+    ;; 最後のフィールド
+    (push (copy-seq current) fields)
+    (nreverse fields)))
+
+(defun parse-csv-value (text)
+  "CSVフィールドをセル値に変換"
+  (let ((trimmed (string-trim '(#\Space #\Tab) text)))
+    (cond
+      ;; 空文字列
+      ((string= trimmed "") nil)
+      ;; =で始まる → 数式として処理
+      ((and (> (length trimmed) 0) (char= (char trimmed 0) #\=))
+       (handler-case
+           (let ((form (read-from-string (subseq trimmed 1))))
+             (values (eval-formula form) form))
+         (error () (values trimmed nil))))
+      ;; 数値を試す
+      (t (let ((num (ignore-errors (read-from-string trimmed))))
+           (if (numberp num)
+               num
+               trimmed))))))
+
+(defun import-csv (filename &key (has-header nil) (start-col 0) (start-row 0))
+  "CSVファイルからインポート
+   :has-header 最初の行をヘッダーとしてスキップ（デフォルトnil）
+   :start-col  開始列（デフォルト0=A列）
+   :start-row  開始行（デフォルト0=1行目）"
+  (with-open-file (in filename 
+                      :direction :input
+                      :external-format :utf-8)
+    (let ((row-idx start-row)
+          (cell-count 0)
+          (first-line t))
+      ;; シートをクリア
+      (setf *sheet* (make-hash-table :test #'equal))
+      (clear-dependencies)
+      ;; 各行を処理
+      (loop for line = (read-line in nil nil)
+            while line do
+        ;; ヘッダー行をスキップ
+        (if (and first-line has-header)
+            (setf first-line nil)
+            (progn
+              (setf first-line nil)
+              (let ((fields (parse-csv-line line))
+                    (col-idx start-col))
+                (dolist (field fields)
+                  (when (< col-idx *cols*)
+                    (multiple-value-bind (val formula) (parse-csv-value field)
+                      (when val
+                        (let* ((name (cell-name col-idx row-idx))
+                               (cell (get-cell name)))
+                          (setf (cell-value cell) val
+                                (cell-formula cell) formula)
+                          (when formula
+                            (update-dependencies 
+                             name 
+                             (extract-references formula row-idx col-idx)))
+                          (incf cell-count)))))
+                  (incf col-idx)))
+              (incf row-idx))))
+      (setf *current-file* nil)  ; CSVなのでsspではない
+      (format t "~%Imported CSV: ~a (~d cells)~%" filename cell-count)
+      filename)))
 
 ;;;; =========================
 ;;;; ユーティリティ
@@ -1155,37 +1586,95 @@
       (t
        (set-text-content text-widget "")))))
 
+(defun format-error-message (error-type details)
+  "エラーメッセージを整形"
+  (case error-type
+    (:syntax (format nil "#構文: ~a" details))
+    (:eval   (format nil "#評価: ~a" details))
+    (:ref    (format nil "#参照: ~a" details))
+    (:circular (format nil "#循環: ~a" details))
+    (t (format nil "#ERR: ~a" details))))
+
 (defun commit-text-input (text-widget canvas)
   "Textウィジェットの内容をセルに確定"
   (let* ((raw (or (get-text-content text-widget) ""))
          (cell (current-cell))
-         (cell-nm (cell-name *cur-x* *cur-y*)))
+         (cell-nm (cell-name *cur-x* *cur-y*))
+         ;; Undo用に変更前の状態を保存
+         (old-value (cell-value cell))
+         (old-formula (cell-formula cell))
+         (error-occurred nil))
     ;; 評価位置を設定
     (setf *eval-col* *cur-x*
           *eval-row* *cur-y*)
-    (handler-case
-        (if (and (> (length raw) 0)
-                 (char= (char raw 0) #\=))
-            ;; =で始まる → 数式として解析・評価
-            (let* ((form (read-from-string (subseq raw 1)))
-                   (*eval-stack* (list cell-nm))  ; 循環参照検出用
-                   (value (eval-formula form))
-                   (refs (extract-references form *cur-y* *cur-x*)))
-              (setf (cell-formula cell) form
-                    (cell-value cell) value)
-              ;; 依存関係を更新
-              (update-dependencies cell-nm refs))
-            ;; それ以外 → 通常の値として解釈
-            (let ((parsed (ignore-errors (read-from-string raw))))
-              (setf (cell-formula cell) nil
-                    (cell-value cell) (or parsed raw))
-              ;; 数式がないので依存関係をクリア
-              (update-dependencies cell-nm nil)))
-      (error (e)
-        (setf (cell-value cell) (format nil "ERR: ~a" e))))
+    (if (and (> (length raw) 0)
+             (char= (char raw 0) #\=))
+        ;; =で始まる → 数式として解析・評価
+        (let ((form nil))
+          ;; 構文解析
+          (handler-case
+              (setf form (read-from-string (subseq raw 1)))
+            (end-of-file ()
+              (setf (cell-value cell) (format-error-message :syntax "式が不完全です")
+                    (cell-formula cell) nil
+                    error-occurred t))
+            (error (e)
+              (setf (cell-value cell) (format-error-message :syntax (princ-to-string e))
+                    (cell-formula cell) nil
+                    error-occurred t)))
+          ;; 評価（構文解析が成功した場合のみ）
+          (unless error-occurred
+            (handler-case
+                (let* ((*eval-stack* (list cell-nm))  ; 循環参照検出用
+                       (value (eval-formula form))
+                       (refs (extract-references form *cur-y* *cur-x*)))
+                  (setf (cell-formula cell) form
+                        (cell-value cell) value)
+                  ;; 依存関係を更新
+                  (update-dependencies cell-nm refs))
+              (error (e)
+                (let ((msg (princ-to-string e)))
+                  ;; 循環参照エラーを検出
+                  (if (search "循環参照" msg)
+                      (setf (cell-value cell) (format-error-message :circular cell-nm))
+                      (setf (cell-value cell) (format-error-message :eval msg)))
+                  ;; エラー時も数式を保持（再編集可能に）
+                  (setf (cell-formula cell) form)
+                  (update-dependencies cell-nm nil))))))
+        ;; それ以外 → 通常の値として解釈
+        (let ((parsed (handler-case 
+                          (read-from-string raw)
+                        (end-of-file () nil)
+                        (error () raw))))
+          (setf (cell-formula cell) nil
+                (cell-value cell) (if (string= raw "") nil (or parsed raw)))
+          ;; 数式がないので依存関係をクリア
+          (update-dependencies cell-nm nil)))
+    ;; 変更があった場合のみUndo履歴に記録
+    (unless (and (equal old-value (cell-value cell))
+                 (equal old-formula (cell-formula cell)))
+      (record-cell-change cell-nm old-value old-formula))
     ;; 依存元を再計算
     (recalc-dependents cell-nm)
     (redraw canvas)))
+
+(defun commit-and-move (text-widget canvas direction)
+  "入力を確定して指定方向に移動
+   direction: :down, :up, :right, :left, :stay"
+  (commit-text-input text-widget canvas)
+  (clear-selection)
+  (case direction
+    (:down  (when (< *cur-y* (1- *rows*)) (incf *cur-y*)))
+    (:up    (when (> *cur-y* 0) (decf *cur-y*)))
+    (:right (when (< *cur-x* (1- *cols*)) (incf *cur-x*)))
+    (:left  (when (> *cur-x* 0) (decf *cur-x*)))
+    (:stay  nil))
+  (setf *sel-start-x* *cur-x*
+        *sel-start-y* *cur-y*
+        *sel-end-x* *cur-x*
+        *sel-end-y* *cur-y*)
+  (update-text-input text-widget)
+  (redraw canvas))
 
 ;;; 後方互換性のため旧関数も残す
 (defun entry-text (e) (get-text-content e))
@@ -1225,6 +1714,14 @@
 ;;;; メイン：GUIの構築と起動
 ;;;; =========================
 
+(defun update-window-title ()
+  "ウィンドウタイトルを更新"
+  (wm-title *tk* (format nil "Spreadsheet v0.4 [~Dx~D]~a" 
+                         *cols* *rows*
+                         (if *current-file* 
+                             (format nil " - ~a" (file-namestring *current-file*))
+                             ""))))
+
 (defun start (&key (rows 26) (cols 14) (input-lines 3))
   "スプレッドシートを起動
    :rows        行数（デフォルト26）
@@ -1240,9 +1737,10 @@
   (clear-selection)
   (setf *clipboard* nil)
   (clear-dependencies)
+  (setf *current-file* nil)
   
   (with-ltk ()
-    (wm-title *tk* (format nil "Spreadsheet v0.3.1 [~Dx~D]" *cols* *rows*))
+    (update-window-title)
     
     ;; ウィジェット作成
     (let* ((input-frame (make-instance 'frame))
@@ -1257,7 +1755,229 @@
                                         :orientation :vertical))
            (canvas (make-instance 'canvas
                                   :width (+ *header-w* (* *cols* *cell-w*))
-                                  :height (+ *header-h* (* *rows* *cell-h*)))))
+                                  :height (+ *header-h* (* *rows* *cell-h*))))
+           ;; メニューバー
+           (mb (make-menubar))
+           (file-menu (make-menu mb "ファイル(F)"))
+           (edit-menu (make-menu mb "編集(E)")))
+      
+      ;; ファイルメニュー項目
+      (make-menubutton file-menu "新規作成(N)        Ctrl+N"
+                       (lambda ()
+                         (new-sheet)
+                         (update-window-title)
+                         (update-text-input input-text)
+                         (redraw canvas)))
+      
+      (make-menubutton file-menu "開く(O)...        Ctrl+O"
+                       (lambda ()
+                         (let ((filename (get-open-file 
+                                          :filetypes '(("Spreadsheet" "*.ssp")
+                                                       ("All files" "*")))))
+                           (when (and filename (> (length filename) 0))
+                             (handler-case
+                                 (progn
+                                   (load-file filename)
+                                   (update-window-title)
+                                   (update-text-input input-text)
+                                   (redraw canvas))
+                               (error (e)
+                                 (do-msg (format nil "読み込みエラー: ~a" e))))))))
+      
+      (make-menubutton file-menu "保存(S)            Ctrl+S"
+                       (lambda ()
+                         (if *current-file*
+                             (progn
+                               (save *current-file*)
+                               (do-msg (format nil "保存しました: ~a" 
+                                              (file-namestring *current-file*))))
+                             ;; ファイルがない場合は名前を付けて保存
+                             (let ((filename (get-save-file 
+                                              :filetypes '(("Spreadsheet" "*.ssp")
+                                                           ("All files" "*")))))
+                               (when (and filename (> (length filename) 0))
+                                 ;; 拡張子がなければ追加
+                                 (unless (search ".ssp" filename :test #'char-equal)
+                                   (setf filename (concatenate 'string filename ".ssp")))
+                                 (save filename)
+                                 (update-window-title)
+                                 (do-msg (format nil "保存しました: ~a" 
+                                                (file-namestring filename))))))))
+      
+      (make-menubutton file-menu "名前を付けて保存(A)..."
+                       (lambda ()
+                         (let ((filename (get-save-file 
+                                          :filetypes '(("Spreadsheet" "*.ssp")
+                                                       ("All files" "*")))))
+                           (when (and filename (> (length filename) 0))
+                             ;; 拡張子がなければ追加
+                             (unless (search ".ssp" filename :test #'char-equal)
+                               (setf filename (concatenate 'string filename ".ssp")))
+                             (save filename)
+                             (update-window-title)
+                             (do-msg (format nil "保存しました: ~a" 
+                                            (file-namestring filename)))))))
+      
+      (add-separator file-menu)
+      
+      (make-menubutton file-menu "CSVインポート..."
+                       (lambda ()
+                         (let ((filename (get-open-file 
+                                          :filetypes '(("CSV files" "*.csv")
+                                                       ("TSV files" "*.tsv")
+                                                       ("Text files" "*.txt")
+                                                       ("All files" "*")))))
+                           (when (and filename (> (length filename) 0))
+                             (handler-case
+                                 (progn
+                                   (import-csv filename)
+                                   (update-window-title)
+                                   (update-text-input input-text)
+                                   (redraw canvas)
+                                   (do-msg (format nil "インポートしました: ~a" 
+                                                  (file-namestring filename))))
+                               (error (e)
+                                 (do-msg (format nil "インポートエラー: ~a" e))))))))
+      
+      (make-menubutton file-menu "CSVエクスポート..."
+                       (lambda ()
+                         (let ((filename (get-save-file 
+                                          :filetypes '(("CSV files" "*.csv")
+                                                       ("All files" "*")))))
+                           (when (and filename (> (length filename) 0))
+                             ;; 拡張子がなければ追加
+                             (unless (search ".csv" filename :test #'char-equal)
+                               (setf filename (concatenate 'string filename ".csv")))
+                             (handler-case
+                                 (progn
+                                   (export-csv filename)
+                                   (do-msg (format nil "エクスポートしました: ~a" 
+                                                  (file-namestring filename))))
+                               (error (e)
+                                 (do-msg (format nil "エクスポートエラー: ~a" e))))))))
+      
+      (add-separator file-menu)
+      
+      (make-menubutton file-menu "終了(X)"
+                       (lambda ()
+                         (setf *exit-mainloop* t)))
+      
+      ;; 編集メニュー項目
+      (make-menubutton edit-menu "元に戻す(U)        Ctrl+Z"
+                       (lambda ()
+                         (when (undo)
+                           (update-text-input input-text)
+                           (redraw canvas))))
+      
+      (make-menubutton edit-menu "やり直し(R)        Ctrl+Y"
+                       (lambda ()
+                         (when (redo)
+                           (update-text-input input-text)
+                           (redraw canvas))))
+      
+      (add-separator edit-menu)
+      
+      (make-menubutton edit-menu "切り取り(X)        Ctrl+X"
+                       (lambda ()
+                         (copy-to-system-clipboard)
+                         (clear-selection-cells)
+                         (clear-selection)
+                         (redraw canvas)
+                         (update-text-input input-text)))
+      
+      (make-menubutton edit-menu "コピー(C)          Ctrl+C"
+                       (lambda ()
+                         (copy-to-system-clipboard)))
+      
+      (make-menubutton edit-menu "貼り付け(V)        Ctrl+V"
+                       (lambda ()
+                         (let ((sys-clip (get-system-clipboard)))
+                           (if (and sys-clip (> (length sys-clip) 0))
+                               (paste-from-system-clipboard)
+                               (paste-clipboard)))
+                         (clear-selection)
+                         (redraw canvas)
+                         (update-text-input input-text)))
+      
+      (add-separator edit-menu)
+      
+      (make-menubutton edit-menu "削除               Delete"
+                       (lambda ()
+                         (clear-selection-cells)
+                         (clear-selection)
+                         (redraw canvas)
+                         (update-text-input input-text)))
+      
+      ;; キーボードショートカット (Ctrl+N, Ctrl+O, Ctrl+S)
+      (bind *tk* "<Control-n>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (new-sheet)
+              (update-window-title)
+              (update-text-input input-text)
+              (redraw canvas)))
+      
+      (bind *tk* "<Control-o>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (let ((filename (get-open-file 
+                               :filetypes '(("Spreadsheet" "*.ssp")
+                                            ("All files" "*")))))
+                (when (and filename (> (length filename) 0))
+                  (handler-case
+                      (progn
+                        (load-file filename)
+                        (update-window-title)
+                        (update-text-input input-text)
+                        (redraw canvas))
+                    (error (e)
+                      (do-msg (format nil "読み込みエラー: ~a" e))))))))
+      
+      (bind *tk* "<Control-s>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (if *current-file*
+                  (progn
+                    (save *current-file*)
+                    (do-msg (format nil "保存しました: ~a" 
+                                   (file-namestring *current-file*))))
+                  ;; ファイルがない場合は名前を付けて保存
+                  (let ((filename (get-save-file 
+                                   :filetypes '(("Spreadsheet" "*.ssp")
+                                                ("All files" "*")))))
+                    (when (and filename (> (length filename) 0))
+                      (unless (search ".ssp" filename :test #'char-equal)
+                        (setf filename (concatenate 'string filename ".ssp")))
+                      (save filename)
+                      (update-window-title)
+                      (do-msg (format nil "保存しました: ~a" 
+                                     (file-namestring filename))))))))
+      
+      ;; Ctrl+Z → Undo
+      (bind *tk* "<Control-z>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (when (undo)
+                (update-text-input input-text)
+                (redraw canvas))))
+      
+      ;; Ctrl+Y → Redo
+      (bind *tk* "<Control-y>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (when (redo)
+                (update-text-input input-text)
+                (redraw canvas))))
+      
+      ;; Ctrl+X → 切り取り
+      (bind *tk* "<Control-x>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (copy-to-system-clipboard)
+              (clear-selection-cells)
+              (clear-selection)
+              (redraw canvas)
+              (update-text-input input-text)))
       
       ;; スクロールバーとテキストを連携
       (configure input-scroll :command (format nil "~a yview" (widget-path input-text)))
@@ -1281,19 +2001,50 @@
 
       ;;; --- イベントバインド ---
 
-      ;; まずLTKのbindでコールバックを設定（内部でsendeventが設定される）
+      ;; Enter → 確定して下に移動
       (bind input-text "<Return>"
             (lambda (evt)
               (declare (ignore evt))
-              (commit-text-input input-text canvas)
+              (commit-and-move input-text canvas :down)
               (focus canvas)))
       
-      ;; 次にTclレベルでバインディングを調整
+      ;; Ctrl+Enter → 確定してそのまま
+      (bind input-text "<Control-Return>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (commit-and-move input-text canvas :stay)
+              (focus canvas)))
+      
+      ;; Shift+Enter → 確定して右に移動
+      (bind input-text "<Shift-Return>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (commit-and-move input-text canvas :right)
+              (focus canvas)))
+      
+      ;; Ctrl+Shift+Enter → 確定して左に移動
+      (bind input-text "<Control-Shift-Return>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (commit-and-move input-text canvas :left)
+              (focus canvas)))
+      
+      ;; Escape → 編集キャンセル（元に戻す）
+      (bind input-text "<Escape>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (update-text-input input-text)
+              (focus canvas)))
+      
+      ;; Tclレベルでバインディングを調整（breakでデフォルト動作を抑制）
       (let ((path (widget-path input-text)))
-        ;; 現在のReturnバインディングを取得して、末尾にbreakを追加
         (format-wish "bind ~a <Return> \"[bind ~a <Return>]; break\"" path path)
-        ;; Shift+Returnを追加（改行を挿入してbreak）
-        (format-wish "bind ~a <Shift-Return> {~a insert insert \\n; break}" path path))
+        (format-wish "bind ~a <Control-Return> \"[bind ~a <Control-Return>]; break\"" path path)
+        (format-wish "bind ~a <Shift-Return> \"[bind ~a <Shift-Return>]; break\"" path path)
+        (format-wish "bind ~a <Control-Shift-Return> \"[bind ~a <Control-Shift-Return>]; break\"" path path)
+        (format-wish "bind ~a <Escape> \"[bind ~a <Escape>]; break\"" path path)
+        ;; Alt+Enter で改行（数式内で改行したい場合）
+        (format-wish "bind ~a <Alt-Return> {~a insert insert \\n; break}" path path))
 
       ;; セルクリック → 選択開始
       (bind canvas "<ButtonPress-1>"
@@ -1457,24 +2208,68 @@
             (lambda (evt)
               (declare (ignore evt))
               (focus input-text)))
+      
+      ;; F2 → 編集モード（既存内容を編集）
+      (bind canvas "<F2>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (focus input-text)
+              ;; カーソルを末尾に移動
+              (format-wish "~a mark set insert end" (widget-path input-text))))
+      
+      ;; Canvas上でキー入力 → 入力欄をクリアしてフォーカス移動（Tclレベルで処理）
+      (let ((canvas-path (widget-path canvas))
+            (text-path (widget-path input-text)))
+        ;; 印刷可能文字のみを処理するTclバインディング
+        (format-wish "bind ~a <Key> {
+          set k %K
+          set c %A
+          # 特殊キーを除外
+          if {$c ne {} && [string length $c] == 1 && [string is print $c]} {
+            # 制御キーやファンクションキーでない場合
+            if {![string match *Control* $k] && 
+                ![string match *Shift* $k] && 
+                ![string match *Alt* $k] && 
+                ![string match *Meta* $k] &&
+                ![string match *Super* $k] &&
+                ![string match F?* $k] &&
+                $k ne {Up} && $k ne {Down} && $k ne {Left} && $k ne {Right} &&
+                $k ne {Return} && $k ne {Escape} && $k ne {Tab} &&
+                $k ne {Delete} && $k ne {BackSpace} &&
+                $k ne {Home} && $k ne {End} && $k ne {Prior} && $k ne {Next} &&
+                $k ne {Insert} && $k ne {Caps_Lock} && $k ne {Num_Lock}} {
+              # テキストをクリアして文字を挿入
+              ~a delete 1.0 end
+              ~a insert end $c
+              focus ~a
+            }
+          }
+        }" canvas-path text-path text-path text-path))
 
       (focus canvas))))
 
 ;;; ロード時メッセージ
-(format t "~%=== Spreadsheet GUI v0.3.1 ===~%")
-(format t "Lisp Powered Edition (Auto-Recalc)~%~%")
+(format t "~%=== Spreadsheet GUI v0.4 ===~%")
+(format t "Lisp Powered Edition~%~%")
 (format t "起動: (ss-gui:start)~%")
 (format t "~%基本操作:~%")
 (format t "  矢印キー          : セル移動~%")
 (format t "  Shift+矢印        : 範囲選択~%")
 (format t "  ドラッグ          : 範囲選択~%")
-(format t "  Ctrl+C/V          : コピー/ペースト~%")
+(format t "  文字キー          : 直接入力開始~%")
+(format t "  F2                : 編集モード~%")
+(format t "  Ctrl+X/C/V        : 切り取り/コピー/ペースト~%")
+(format t "  Ctrl+Z/Y          : 元に戻す/やり直し~%")
 (format t "  Delete/BackSpace  : セル消去~%")
-(format t "  Enter             : 入力確定（自動再計算）~%")
-(format t "~%デバッグ:~%")
-(format t "  (ss-gui:show-dependencies)  ; 依存関係を表示~%")
-(format t "  (ss-gui:show-cell-deps \"A1\") ; セルの依存関係~%")
-(format t "~%数式例:~%")
-(format t "  A1に10を入力、A2に =(+ A1 5) を入力~%")
-(format t "  → A1を変更するとA2が自動更新~%")
-(format t "~%v0.3.1 新機能: 自動再計算、範囲選択、クリップボード~%")
+(format t "  Escape            : 編集キャンセル~%")
+(format t "~%入力確定:~%")
+(format t "  Enter             : 確定→下に移動~%")
+(format t "  Ctrl+Enter        : 確定→そのまま~%")
+(format t "  Shift+Enter       : 確定→右に移動~%")
+(format t "  Ctrl+Shift+Enter  : 確定→左に移動~%")
+(format t "  Alt+Enter         : 入力欄で改行~%")
+(format t "~%ファイル操作:~%")
+(format t "  Ctrl+N            : 新規作成~%")
+(format t "  Ctrl+O            : ファイルを開く~%")
+(format t "  Ctrl+S            : 保存~%")
+(format t "~%v0.4 機能: Undo/Redo、ファイルメニュー、CSV入出力~%")
