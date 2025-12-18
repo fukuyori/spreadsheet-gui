@@ -2,7 +2,7 @@
 ;;;; spreadsheet-gui.lisp
 ;;;; Common Lisp + LTK で作るシンプルな表計算ソフト
 ;;;; 
-;;;; Version: 0.4.3
+;;;; Version: 0.5
 ;;;; Date: 2025-01-15
 ;;;; 
 ;;;; 機能:
@@ -48,12 +48,23 @@
 
 (defparameter *rows* 26)          ; 行数
 (defparameter *cols* 14)          ; 列数 (A-N)
-(defparameter *cell-w* 100)       ; セル幅（ピクセル）※リスト表示用に拡大
-(defparameter *cell-h* 24)        ; セル高さ（ピクセル）
+(defparameter *default-cell-w* 100) ; デフォルトセル幅
+(defparameter *default-cell-h* 24)  ; デフォルトセル高さ
+(defparameter *min-cell-w* 30)    ; 最小セル幅
+(defparameter *min-cell-h* 16)    ; 最小セル高さ
 (defparameter *header-h* 24)      ; 列ヘッダー(A,B,C...)の高さ
 (defparameter *header-w* 40)      ; 行ヘッダー(1,2,3...)の幅
 (defparameter *cur-x* 0)          ; カーソル位置（列）
 (defparameter *cur-y* 0)          ; カーソル位置（行）
+
+;; 各列の幅、各行の高さ（個別設定用）
+(defparameter *col-widths* nil)   ; 列幅の配列
+(defparameter *row-heights* nil)  ; 行高さの配列
+
+;; リサイズ用
+(defparameter *resize-mode* nil)  ; :col または :row
+(defparameter *resize-index* nil) ; リサイズ中の列/行インデックス
+(defparameter *resize-start* nil) ; ドラッグ開始位置
 
 ;; 範囲選択用
 (defparameter *sel-start-x* nil)  ; 選択開始列
@@ -112,6 +123,101 @@
   (get-cell (cell-name *cur-x* *cur-y*)))
 
 ;;;; =========================
+;;;; 列幅・行高さ管理
+;;;; =========================
+
+(defun init-sizes ()
+  "列幅・行高さを初期化"
+  (setf *col-widths* (make-array *cols* :initial-element *default-cell-w*))
+  (setf *row-heights* (make-array *rows* :initial-element *default-cell-h*)))
+
+(defun col-width (x)
+  "列xの幅を取得"
+  (if (and *col-widths* (< x (length *col-widths*)))
+      (aref *col-widths* x)
+      *default-cell-w*))
+
+(defun row-height (y)
+  "行yの高さを取得"
+  (if (and *row-heights* (< y (length *row-heights*)))
+      (aref *row-heights* y)
+      *default-cell-h*))
+
+(defun set-col-width (x w)
+  "列xの幅を設定"
+  (when (and *col-widths* (< x (length *col-widths*)))
+    (setf (aref *col-widths* x) (max *min-cell-w* w))))
+
+(defun set-row-height (y h)
+  "行yの高さを設定"
+  (when (and *row-heights* (< y (length *row-heights*)))
+    (setf (aref *row-heights* y) (max *min-cell-h* h))))
+
+(defun col-left (x)
+  "列xの左端X座標を取得"
+  (let ((pos *header-w*))
+    (dotimes (i x pos)
+      (incf pos (col-width i)))))
+
+(defun row-top (y)
+  "行yの上端Y座標を取得"
+  (let ((pos *header-h*))
+    (dotimes (i y pos)
+      (incf pos (row-height i)))))
+
+(defun total-width ()
+  "全列の合計幅"
+  (let ((w *header-w*))
+    (dotimes (x *cols* w)
+      (incf w (col-width x)))))
+
+(defun total-height ()
+  "全行の合計高さ"
+  (let ((h *header-h*))
+    (dotimes (y *rows* h)
+      (incf h (row-height y)))))
+
+(defun find-col-at (px)
+  "X座標pxから列インデックスを取得（ヘッダー内なら-1）"
+  (if (< px *header-w*)
+      -1
+      (let ((x 0)
+            (pos *header-w*))
+        (loop while (and (< x *cols*) (>= px pos))
+              do (incf pos (col-width x))
+                 (incf x))
+        (1- x))))
+
+(defun find-row-at (py)
+  "Y座標pyから行インデックスを取得（ヘッダー内なら-1）"
+  (if (< py *header-h*)
+      -1
+      (let ((y 0)
+            (pos *header-h*))
+        (loop while (and (< y *rows*) (>= py pos))
+              do (incf pos (row-height y))
+                 (incf y))
+        (1- y))))
+
+(defun near-col-border-p (px tolerance)
+  "X座標pxが列境界の近くにあるか判定。境界の列インデックスを返す（なければnil）"
+  (let ((pos *header-w*))
+    (dotimes (x *cols*)
+      (incf pos (col-width x))
+      (when (<= (- pos tolerance) px (+ pos tolerance))
+        (return-from near-col-border-p x))))
+  nil)
+
+(defun near-row-border-p (py tolerance)
+  "Y座標pyが行境界の近くにあるか判定。境界の行インデックスを返す（なければnil）"
+  (let ((pos *header-h*))
+    (dotimes (y *rows*)
+      (incf pos (row-height y))
+      (when (<= (- pos tolerance) py (+ pos tolerance))
+        (return-from near-row-border-p y))))
+  nil)
+
+;;;; =========================
 ;;;; 範囲選択
 ;;;; =========================
 
@@ -143,8 +249,591 @@
            (<= min-y y max-y)))))
 
 ;;;; =========================
-;;;; コピー＆ペースト
+;;;; 行・列の挿入・削除
 ;;;; =========================
+
+(defun shift-cell-name-row (name delta)
+  "セル名の行番号をdeltaだけシフト。範囲外ならnilを返す"
+  (let* ((col-char (char name 0))
+         (row-num (parse-integer (subseq name 1)))
+         (new-row (+ row-num delta)))
+    (if (and (>= new-row 1) (<= new-row *rows*))
+        (format nil "~a~d" col-char new-row)
+        nil)))
+
+(defun shift-cell-name-col (name delta)
+  "セル名の列をdeltaだけシフト。範囲外ならnilを返す"
+  (let* ((col-char (char name 0))
+         (col-idx (- (char-code (char-upcase col-char)) (char-code #\A)))
+         (new-col (+ col-idx delta))
+         (row-str (subseq name 1)))
+    (if (and (>= new-col 0) (< new-col *cols*))
+        (format nil "~a~a" (code-char (+ (char-code #\A) new-col)) row-str)
+        nil)))
+
+;;; データ存在チェック
+(defun row-has-data-p (row-idx)
+  "指定行にデータ（値または数式）があるかチェック"
+  (loop for x from 0 below *cols*
+        for cell = (gethash (cell-name x row-idx) *sheet*)
+        thereis (and cell (or (cell-value cell) (cell-formula cell)))))
+
+(defun col-has-data-p (col-idx)
+  "指定列にデータ（値または数式）があるかチェック"
+  (loop for y from 0 below *rows*
+        for cell = (gethash (cell-name col-idx y) *sheet*)
+        thereis (and cell (or (cell-value cell) (cell-formula cell)))))
+
+;;; 確認ダイアログ
+(defun confirm-dialog (title message)
+  "確認ダイアログを表示。OKならt、キャンセルならnilを返す"
+  ;; tk_messageBoxの結果を直接取得
+  (format-wish "senddatastring [tk_messageBox -type okcancel -icon warning -title {~a} -message {~a}]"
+               title message)
+  (string= (ltk::read-data) "ok"))
+
+;;; 数式参照の更新（全セル対象）
+;;; セル位置（cell-row, cell-col）は移動後の位置
+;;; 移動前の位置を逆算して補正を行う
+
+(defun rel-symbol-p (sym)
+  "シンボルがREL（パッケージ不問）かチェック"
+  (and (symbolp sym)
+       (string-equal (symbol-name sym) "REL")))
+
+(defun rel-range-symbol-p (sym)
+  "シンボルがREL-RANGE（パッケージ不問）かチェック"
+  (and (symbolp sym)
+       (string-equal (symbol-name sym) "REL-RANGE")))
+
+(defun update-formula-ref-for-row-insert (formula at-row cell-row cell-col)
+  "行挿入時の数式参照更新。
+   - 絶対参照: at-row以降の行参照を+1
+   - 相対参照(rel): 移動前の参照先がat-rowより前なら補正
+   - 相対範囲(rel-range): 同様に補正
+   注: cell-rowは移動後の位置"
+  (cond
+    ((null formula) nil)
+    ((numberp formula) formula)
+    ((stringp formula) formula)
+    ((keywordp formula) formula)
+    ((symbolp formula)
+     (let ((name (symbol-name formula)))
+       (if (and (>= (length name) 2)
+                (alpha-char-p (char name 0))
+                (every #'digit-char-p (subseq name 1)))
+           (let* ((row-num (parse-integer (subseq name 1)))
+                  (row-idx (1- row-num)))
+             (if (>= row-idx at-row)
+                 ;; 挿入位置以降なら+1
+                 (let ((new-name (shift-cell-name-row name 1)))
+                   (if new-name (intern new-name :ss-gui) formula))
+                 formula))
+           formula)))
+    ((listp formula)
+     (cond
+       ;; REL の特別処理
+       ((and (rel-symbol-p (car formula))
+             (= (length formula) 3)
+             (numberp (second formula))
+             (numberp (third formula)))
+        (let ((row-offset (second formula))
+              (col-offset (third formula)))
+          (cond
+            ;; セルが移動した（現在at-rowより下にある）
+            ((> cell-row at-row)
+             (let* ((orig-cell-row (1- cell-row))  ; 移動前の位置
+                    (orig-target-row (+ orig-cell-row row-offset)))
+               (if (< orig-target-row at-row)
+                   ;; 参照先は移動しなかった、オフセットを調整
+                   (list 'rel (1- row-offset) col-offset)
+                   ;; 参照先も移動した、オフセットはそのまま
+                   (list 'rel row-offset col-offset))))
+            ;; セルが移動していない
+            ((< cell-row at-row)
+             (let ((target-row (+ cell-row row-offset)))
+               (if (>= target-row at-row)
+                   ;; 参照先が移動した、オフセットを調整
+                   (list 'rel (1+ row-offset) col-offset)
+                   ;; 参照先も移動しなかった、オフセットはそのまま
+                   (list 'rel row-offset col-offset))))
+            ;; cell-row == at-row は挿入された空セル
+            (t formula))))
+       ;; REL-RANGE の特別処理
+       ((and (rel-range-symbol-p (car formula))
+             (= (length formula) 5)
+             (every #'numberp (cdr formula)))
+        (let ((start-row-off (second formula))
+              (start-col-off (third formula))
+              (end-row-off (fourth formula))
+              (end-col-off (fifth formula)))
+          (cond
+            ((> cell-row at-row)
+             (let* ((orig-cell-row (1- cell-row))
+                    (orig-start-row (+ orig-cell-row start-row-off))
+                    (orig-end-row (+ orig-cell-row end-row-off)))
+               (list 'rel-range
+                     (if (< orig-start-row at-row) (1- start-row-off) start-row-off)
+                     start-col-off
+                     (if (< orig-end-row at-row) (1- end-row-off) end-row-off)
+                     end-col-off)))
+            ((< cell-row at-row)
+             (let ((start-target (+ cell-row start-row-off))
+                   (end-target (+ cell-row end-row-off)))
+               (list 'rel-range
+                     (if (>= start-target at-row) (1+ start-row-off) start-row-off)
+                     start-col-off
+                     (if (>= end-target at-row) (1+ end-row-off) end-row-off)
+                     end-col-off)))
+            (t formula))))
+       ;; 通常のリスト処理
+       (t (mapcar (lambda (x) (update-formula-ref-for-row-insert x at-row cell-row cell-col)) formula))))
+    (t formula)))
+
+(defun update-formula-ref-for-row-delete (formula at-row cell-row cell-col)
+  "行削除時の数式参照更新。
+   - 絶対参照: at-rowへの参照は#REF!、at-rowより後は-1
+   - 相対参照(rel): 参照先が削除行なら#REF!、移動前の参照先がat-rowより前なら補正
+   - 相対範囲(rel-range): 同様に補正
+   注: cell-rowは移動後の位置"
+  (cond
+    ((null formula) nil)
+    ((numberp formula) formula)
+    ((stringp formula) formula)
+    ((keywordp formula) formula)
+    ((symbolp formula)
+     (let ((name (symbol-name formula)))
+       (if (and (>= (length name) 2)
+                (alpha-char-p (char name 0))
+                (every #'digit-char-p (subseq name 1)))
+           (let* ((row-num (parse-integer (subseq name 1)))
+                  (row-idx (1- row-num)))
+             (cond
+               ((= row-idx at-row)
+                (intern "#REF!" :ss-gui))
+               ((> row-idx at-row)
+                (let ((new-name (shift-cell-name-row name -1)))
+                  (if new-name (intern new-name :ss-gui) formula)))
+               (t formula)))
+           formula)))
+    ((listp formula)
+     (cond
+       ;; REL の特別処理
+       ((and (rel-symbol-p (car formula))
+             (= (length formula) 3)
+             (numberp (second formula))
+             (numberp (third formula)))
+        (let ((row-offset (second formula))
+              (col-offset (third formula)))
+          (cond
+            ;; セルが移動した（削除後、at-row以降にある = 移動前はat-row+1以降）
+            ((>= cell-row at-row)
+             (let* ((orig-cell-row (1+ cell-row))  ; 移動前の位置
+                    (orig-target-row (+ orig-cell-row row-offset)))
+               (cond
+                 ((= orig-target-row at-row)
+                  '(quote |#REF!|))
+                 ((< orig-target-row at-row)
+                  ;; 参照先は移動しなかった、オフセットを調整
+                  (list 'rel (1+ row-offset) col-offset))
+                 ;; 参照先も移動した、オフセットはそのまま
+                 (t (list 'rel row-offset col-offset)))))
+            ;; セルが移動していない
+            (t
+             (let ((target-row (+ cell-row row-offset)))
+               (cond
+                 ((= target-row at-row)
+                  '(quote |#REF!|))
+                 ((> target-row at-row)
+                  ;; 参照先が移動した、オフセットを調整
+                  (list 'rel (1- row-offset) col-offset))
+                 (t (list 'rel row-offset col-offset))))))))
+       ;; REL-RANGE の特別処理
+       ((and (rel-range-symbol-p (car formula))
+             (= (length formula) 5)
+             (every #'numberp (cdr formula)))
+        (let ((start-row-off (second formula))
+              (start-col-off (third formula))
+              (end-row-off (fourth formula))
+              (end-col-off (fifth formula)))
+          (cond
+            ((>= cell-row at-row)
+             (let* ((orig-cell-row (1+ cell-row))
+                    (orig-start-row (+ orig-cell-row start-row-off))
+                    (orig-end-row (+ orig-cell-row end-row-off)))
+               (if (or (= orig-start-row at-row) (= orig-end-row at-row))
+                   '(quote |#REF!|)
+                   (list 'rel-range
+                         (if (< orig-start-row at-row) (1+ start-row-off) start-row-off)
+                         start-col-off
+                         (if (< orig-end-row at-row) (1+ end-row-off) end-row-off)
+                         end-col-off))))
+            (t
+             (let ((start-target (+ cell-row start-row-off))
+                   (end-target (+ cell-row end-row-off)))
+               (if (or (= start-target at-row) (= end-target at-row))
+                   '(quote |#REF!|)
+                   (list 'rel-range
+                         (if (> start-target at-row) (1- start-row-off) start-row-off)
+                         start-col-off
+                         (if (> end-target at-row) (1- end-row-off) end-row-off)
+                         end-col-off)))))))
+       ;; 通常のリスト処理
+       (t (mapcar (lambda (x) (update-formula-ref-for-row-delete x at-row cell-row cell-col)) formula))))
+    (t formula)))
+
+(defun update-formula-ref-for-col-insert (formula at-col cell-row cell-col)
+  "列挿入時の数式参照更新。
+   - 絶対参照: at-col以降の列参照を+1
+   - 相対参照(rel): 移動前の参照先がat-colより前なら補正
+   - 相対範囲(rel-range): 同様に補正
+   注: cell-colは移動後の位置"
+  (cond
+    ((null formula) nil)
+    ((numberp formula) formula)
+    ((stringp formula) formula)
+    ((keywordp formula) formula)
+    ((symbolp formula)
+     (let ((name (symbol-name formula)))
+       (if (and (>= (length name) 2)
+                (alpha-char-p (char name 0))
+                (every #'digit-char-p (subseq name 1)))
+           (let* ((col-idx (- (char-code (char-upcase (char name 0))) (char-code #\A))))
+             (if (>= col-idx at-col)
+                 ;; 挿入位置以降なら+1
+                 (let ((new-name (shift-cell-name-col name 1)))
+                   (if new-name (intern new-name :ss-gui) formula))
+                 formula))
+           formula)))
+    ((listp formula)
+     (cond
+       ;; REL の特別処理
+       ((and (rel-symbol-p (car formula))
+             (= (length formula) 3)
+             (numberp (second formula))
+             (numberp (third formula)))
+        (let ((row-offset (second formula))
+              (col-offset (third formula)))
+          (cond
+            ;; セルが移動した（現在at-colより右にある）
+            ((> cell-col at-col)
+             (let* ((orig-cell-col (1- cell-col))  ; 移動前の位置
+                    (orig-target-col (+ orig-cell-col col-offset)))
+               (if (< orig-target-col at-col)
+                   ;; 参照先は移動しなかった、オフセットを調整
+                   (list 'rel row-offset (1- col-offset))
+                   ;; 参照先も移動した、オフセットはそのまま
+                   (list 'rel row-offset col-offset))))
+            ;; セルが移動していない
+            ((< cell-col at-col)
+             (let ((target-col (+ cell-col col-offset)))
+               (if (>= target-col at-col)
+                   ;; 参照先が移動した、オフセットを調整
+                   (list 'rel row-offset (1+ col-offset))
+                   ;; 参照先も移動しなかった、オフセットはそのまま
+                   (list 'rel row-offset col-offset))))
+            ;; cell-col == at-col は挿入された空セル
+            (t formula))))
+       ;; REL-RANGE の特別処理
+       ((and (rel-range-symbol-p (car formula))
+             (= (length formula) 5)
+             (every #'numberp (cdr formula)))
+        (let ((start-row-off (second formula))
+              (start-col-off (third formula))
+              (end-row-off (fourth formula))
+              (end-col-off (fifth formula)))
+          (cond
+            ((> cell-col at-col)
+             (let* ((orig-cell-col (1- cell-col))
+                    (orig-start-col (+ orig-cell-col start-col-off))
+                    (orig-end-col (+ orig-cell-col end-col-off)))
+               (list 'rel-range
+                     start-row-off
+                     (if (< orig-start-col at-col) (1- start-col-off) start-col-off)
+                     end-row-off
+                     (if (< orig-end-col at-col) (1- end-col-off) end-col-off))))
+            ((< cell-col at-col)
+             (let ((start-target (+ cell-col start-col-off))
+                   (end-target (+ cell-col end-col-off)))
+               (list 'rel-range
+                     start-row-off
+                     (if (>= start-target at-col) (1+ start-col-off) start-col-off)
+                     end-row-off
+                     (if (>= end-target at-col) (1+ end-col-off) end-col-off))))
+            (t formula))))
+       ;; 通常のリスト処理
+       (t (mapcar (lambda (x) (update-formula-ref-for-col-insert x at-col cell-row cell-col)) formula))))
+    (t formula)))
+
+(defun update-formula-ref-for-col-delete (formula at-col cell-row cell-col)
+  "列削除時の数式参照更新。
+   - 絶対参照: at-colへの参照は#REF!、at-colより後は-1
+   - 相対参照(rel): 参照先が削除列なら#REF!、移動前の参照先がat-colより前なら補正
+   - 相対範囲(rel-range): 同様に補正
+   注: cell-colは移動後の位置"
+  (cond
+    ((null formula) nil)
+    ((numberp formula) formula)
+    ((stringp formula) formula)
+    ((keywordp formula) formula)
+    ((symbolp formula)
+     (let ((name (symbol-name formula)))
+       (if (and (>= (length name) 2)
+                (alpha-char-p (char name 0))
+                (every #'digit-char-p (subseq name 1)))
+           (let* ((col-idx (- (char-code (char-upcase (char name 0))) (char-code #\A))))
+             (cond
+               ((= col-idx at-col)
+                (intern "#REF!" :ss-gui))
+               ((> col-idx at-col)
+                (let ((new-name (shift-cell-name-col name -1)))
+                  (if new-name (intern new-name :ss-gui) formula)))
+               (t formula)))
+           formula)))
+    ((listp formula)
+     (cond
+       ;; REL の特別処理
+       ((and (rel-symbol-p (car formula))
+             (= (length formula) 3)
+             (numberp (second formula))
+             (numberp (third formula)))
+        (let ((row-offset (second formula))
+              (col-offset (third formula)))
+          (cond
+            ;; セルが移動した（削除後、at-col以降にある = 移動前はat-col+1以降）
+            ((>= cell-col at-col)
+             (let* ((orig-cell-col (1+ cell-col))  ; 移動前の位置
+                    (orig-target-col (+ orig-cell-col col-offset)))
+               (cond
+                 ((= orig-target-col at-col)
+                  '(quote |#REF!|))
+                 ((< orig-target-col at-col)
+                  ;; 参照先は移動しなかった、オフセットを調整
+                  (list 'rel row-offset (1+ col-offset)))
+                 ;; 参照先も移動した、オフセットはそのまま
+                 (t (list 'rel row-offset col-offset)))))
+            ;; セルが移動していない
+            (t
+             (let ((target-col (+ cell-col col-offset)))
+               (cond
+                 ((= target-col at-col)
+                  '(quote |#REF!|))
+                 ((> target-col at-col)
+                  ;; 参照先が移動した、オフセットを調整
+                  (list 'rel row-offset (1- col-offset)))
+                 (t (list 'rel row-offset col-offset))))))))
+       ;; REL-RANGE の特別処理
+       ((and (rel-range-symbol-p (car formula))
+             (= (length formula) 5)
+             (every #'numberp (cdr formula)))
+        (let ((start-row-off (second formula))
+              (start-col-off (third formula))
+              (end-row-off (fourth formula))
+              (end-col-off (fifth formula)))
+          (cond
+            ((>= cell-col at-col)
+             (let* ((orig-cell-col (1+ cell-col))
+                    (orig-start-col (+ orig-cell-col start-col-off))
+                    (orig-end-col (+ orig-cell-col end-col-off)))
+               (if (or (= orig-start-col at-col) (= orig-end-col at-col))
+                   '(quote |#REF!|)
+                   (list 'rel-range
+                         start-row-off
+                         (if (< orig-start-col at-col) (1+ start-col-off) start-col-off)
+                         end-row-off
+                         (if (< orig-end-col at-col) (1+ end-col-off) end-col-off)))))
+            (t
+             (let ((start-target (+ cell-col start-col-off))
+                   (end-target (+ cell-col end-col-off)))
+               (if (or (= start-target at-col) (= end-target at-col))
+                   '(quote |#REF!|)
+                   (list 'rel-range
+                         start-row-off
+                         (if (> start-target at-col) (1- start-col-off) start-col-off)
+                         end-row-off
+                         (if (> end-target at-col) (1- end-col-off) end-col-off))))))))
+       ;; 通常のリスト処理
+       (t (mapcar (lambda (x) (update-formula-ref-for-col-delete x at-col cell-row cell-col)) formula))))
+    (t formula)))
+
+;;; 全セルの数式参照を更新
+(defun update-all-formulas-with-position (update-fn)
+  "全セルの数式を更新関数で更新。update-fnは (formula row col) を受け取る"
+  (maphash (lambda (name cell)
+             (when (cell-formula cell)
+               (let* ((coords (parse-cell-name name))
+                      (col (first coords))
+                      (row (second coords)))
+                 (setf (cell-formula cell)
+                       (funcall update-fn (cell-formula cell) row col)))))
+           *sheet*))
+
+(defun insert-row (at-row &optional force)
+  "指定行に空行を挿入（at-row以降を下にシフト、最終行は破棄）
+   force=tの場合は確認なしで実行"
+  (when (and (>= at-row 0) (< at-row *rows*))
+    ;; 最終行にデータがあるかチェック
+    (when (and (not force) (row-has-data-p (1- *rows*)))
+      (unless (confirm-dialog "Insert Row" 
+                              (format nil "Row ~a contains data and will be deleted. Continue?" *rows*))
+        (return-from insert-row nil)))
+    ;; 最終行のセルを削除
+    (loop for x from 0 below *cols* do
+      (remhash (cell-name x (1- *rows*)) *sheet*))
+    ;; 下から上に向かってセルを移動（最終行-1から挿入行まで）
+    (loop for y from (- *rows* 2) downto at-row do
+      (loop for x from 0 below *cols* do
+        (let* ((src-name (cell-name x y))
+               (dst-name (cell-name x (1+ y)))
+               (src-cell (gethash src-name *sheet*)))
+          (when src-cell
+            ;; セルを移動（数式はまだ更新しない）
+            (setf (gethash dst-name *sheet*) src-cell)
+            (remhash src-name *sheet*)))))
+    ;; 全セルの数式参照を更新（挿入位置以降の参照を+1）
+    (update-all-formulas-with-position 
+     (lambda (f row col) (update-formula-ref-for-row-insert f at-row row col)))
+    ;; 行高さ配列を更新（シフト）
+    (when *row-heights*
+      (loop for i from (- *rows* 2) downto at-row do
+        (setf (aref *row-heights* (1+ i)) (aref *row-heights* i)))
+      (setf (aref *row-heights* at-row) *default-cell-h*))
+    ;; 全セルを再評価
+    (recalculate-all)
+    ;; 依存関係を再構築
+    (rebuild-all-dependencies)
+    t))
+
+(defun delete-row (at-row)
+  "指定行を削除（at-row以降を上にシフト、最終行は空になる）"
+  (when (and (>= at-row 0) (< at-row *rows*))
+    ;; 削除行のセルをクリア
+    (loop for x from 0 below *cols* do
+      (remhash (cell-name x at-row) *sheet*))
+    ;; 上にシフト
+    (loop for y from (1+ at-row) below *rows* do
+      (loop for x from 0 below *cols* do
+        (let* ((src-name (cell-name x y))
+               (dst-name (cell-name x (1- y)))
+               (src-cell (gethash src-name *sheet*)))
+          (when src-cell
+            ;; セルを移動（数式はまだ更新しない）
+            (setf (gethash dst-name *sheet*) src-cell)
+            (remhash src-name *sheet*)))))
+    ;; 全セルの数式参照を更新（削除行への参照は#REF!、それより後は-1）
+    (update-all-formulas-with-position 
+     (lambda (f row col) (update-formula-ref-for-row-delete f at-row row col)))
+    ;; 行高さ配列を更新（シフト）
+    (when *row-heights*
+      (loop for i from at-row below (1- *rows*) do
+        (setf (aref *row-heights* i) (aref *row-heights* (1+ i))))
+      (setf (aref *row-heights* (1- *rows*)) *default-cell-h*))
+    ;; 全セルを再評価
+    (recalculate-all)
+    ;; 依存関係を再構築
+    (rebuild-all-dependencies)
+    t))
+
+(defun insert-col (at-col &optional force)
+  "指定列に空列を挿入（at-col以降を右にシフト、最終列は破棄）
+   force=tの場合は確認なしで実行"
+  (when (and (>= at-col 0) (< at-col *cols*))
+    ;; 最終列にデータがあるかチェック
+    (when (and (not force) (col-has-data-p (1- *cols*)))
+      (let ((col-name (string (code-char (+ (char-code #\A) (1- *cols*))))))
+        (unless (confirm-dialog "Insert Column"
+                                (format nil "Column ~a contains data and will be deleted. Continue?" col-name))
+          (return-from insert-col nil))))
+    ;; 最終列のセルを削除
+    (loop for y from 0 below *rows* do
+      (remhash (cell-name (1- *cols*) y) *sheet*))
+    ;; 右から左に向かってセルを移動（最終列-1から挿入列まで）
+    (loop for x from (- *cols* 2) downto at-col do
+      (loop for y from 0 below *rows* do
+        (let* ((src-name (cell-name x y))
+               (dst-name (cell-name (1+ x) y))
+               (src-cell (gethash src-name *sheet*)))
+          (when src-cell
+            ;; セルを移動（数式はまだ更新しない）
+            (setf (gethash dst-name *sheet*) src-cell)
+            (remhash src-name *sheet*)))))
+    ;; 全セルの数式参照を更新（挿入位置以降の参照を+1）
+    (update-all-formulas-with-position 
+     (lambda (f row col) (update-formula-ref-for-col-insert f at-col row col)))
+    ;; 列幅配列を更新（シフト）
+    (when *col-widths*
+      (loop for i from (- *cols* 2) downto at-col do
+        (setf (aref *col-widths* (1+ i)) (aref *col-widths* i)))
+      (setf (aref *col-widths* at-col) *default-cell-w*))
+    ;; 全セルを再評価
+    (recalculate-all)
+    ;; 依存関係を再構築
+    (rebuild-all-dependencies)
+    t))
+
+(defun delete-col (at-col)
+  "指定列を削除（at-col以降を左にシフト、最終列は空になる）"
+  (when (and (>= at-col 0) (< at-col *cols*))
+    ;; 削除列のセルをクリア
+    (loop for y from 0 below *rows* do
+      (remhash (cell-name at-col y) *sheet*))
+    ;; 左にシフト
+    (loop for x from (1+ at-col) below *cols* do
+      (loop for y from 0 below *rows* do
+        (let* ((src-name (cell-name x y))
+               (dst-name (cell-name (1- x) y))
+               (src-cell (gethash src-name *sheet*)))
+          (when src-cell
+            ;; セルを移動（数式はまだ更新しない）
+            (setf (gethash dst-name *sheet*) src-cell)
+            (remhash src-name *sheet*)))))
+    ;; 全セルの数式参照を更新（削除列への参照は#REF!、それより後は-1）
+    (update-all-formulas-with-position 
+     (lambda (f row col) (update-formula-ref-for-col-delete f at-col row col)))
+    ;; 列幅配列を更新（シフト）
+    (when *col-widths*
+      (loop for i from at-col below (1- *cols*) do
+        (setf (aref *col-widths* i) (aref *col-widths* (1+ i))))
+      (setf (aref *col-widths* (1- *cols*)) *default-cell-w*))
+    ;; 全セルを再評価
+    (recalculate-all)
+    ;; 依存関係を再構築
+    (rebuild-all-dependencies)
+    t))
+
+(defun rebuild-all-dependencies ()
+  "全セルの依存関係を再構築"
+  (clear-dependencies)
+  (maphash (lambda (name cell)
+             (when (cell-formula cell)
+               (let* ((coords (parse-cell-name name))
+                      (col (first coords))
+                      (row (second coords))
+                      (refs (extract-references (cell-formula cell) row col)))
+                 (update-dependencies name refs))))
+           *sheet*))
+
+(defun recalculate-all ()
+  "全セルの数式を再評価"
+  (maphash (lambda (name cell)
+             (when (cell-formula cell)
+               (let* ((coords (parse-cell-name name))
+                      (col (first coords))
+                      (row (second coords)))
+                 ;; 動的変数を設定して評価
+                 (let ((*eval-col* col)
+                       (*eval-row* row)
+                       (*eval-stack* (list name)))
+                   (setf (cell-value cell)
+                         (handler-case
+                             (eval-formula (cell-formula cell))
+                           (error (e)
+                             (format nil "#評価:~a" (type-of e)))))))))
+           *sheet*))
+
+;;;; =========================
+;;;; コピー＆ペースト
+;;;; ===========================
 
 (defun copy-selection ()
   "選択範囲をクリップボードにコピー"
@@ -265,15 +954,16 @@
 
 (defun format-cell-for-clipboard (val formula)
   "セル値をクリップボード用文字列に変換"
-  (cond
-    ;; 数式があればそれを優先
-    (formula (format nil "=~S" formula))
-    ;; NILは空文字列
-    ((null val) "")
-    ;; 文字列はそのまま
-    ((stringp val) val)
-    ;; その他はprinc形式
-    (t (princ-to-string val))))
+  (let ((*package* (find-package :ss-gui)))  ; パッケージプレフィックスなしで表示
+    (cond
+      ;; 数式があればそれを優先
+      (formula (format nil "=~S" formula))
+      ;; NILは空文字列
+      ((null val) "")
+      ;; 文字列はそのまま
+      ((stringp val) val)
+      ;; その他はprinc形式
+      (t (princ-to-string val)))))
 
 (defun selection-to-tsv ()
   "選択範囲をTSV文字列に変換"
@@ -308,12 +998,14 @@
       ;; =で始まる → 数式として処理
       ((and (> (length trimmed) 0) (char= (char trimmed 0) #\=))
        (handler-case
-           (let* ((form (read-from-string (subseq trimmed 1)))
+           (let* ((*package* (find-package :ss-gui))  ; SS-GUIパッケージで読み込み
+                  (form (read-from-string (subseq trimmed 1)))
                   (value (eval-formula form)))
              (values value form))
          (error () (values trimmed nil))))
       ;; 数値を試す
-      (t (let ((num (ignore-errors (read-from-string trimmed))))
+      (t (let* ((*package* (find-package :ss-gui))
+                (num (ignore-errors (read-from-string trimmed))))
            (if (numberp num)
                num
                trimmed))))))
@@ -792,7 +1484,8 @@
                          :external-format :utf-8)
       (let ((*print-pretty* t)
             (*print-right-margin* 80)
-            (*print-case* :downcase))
+            (*print-case* :downcase)
+            (*package* (find-package :ss-gui)))  ; パッケージプレフィックスなしで保存
         ;; ヘッダーコメント
         (format out ";;;; -*- mode: lisp; coding: utf-8 -*-~%")
         (format out ";;;; Spreadsheet GUI File (.ssp)~%")
@@ -803,7 +1496,7 @@
            :format-version 1
            :metadata (:created ,(iso-timestamp)
                       :modified ,(iso-timestamp)
-                      :app-version "0.4.3")
+                      :app-version "0.5")
            :grid (:rows ,*rows* :cols ,*cols*)
            :cells ,cells-data)
          out)
@@ -817,7 +1510,8 @@
   (with-open-file (in filename 
                       :direction :input
                       :external-format :utf-8)
-    (let ((data (read in)))
+    (let* ((*package* (find-package :ss-gui))  ; SS-GUIパッケージで読み込み
+           (data (read in)))
       ;; 形式チェック
       (unless (and (listp data) (eq (car data) :spreadsheet))
         (error "無効なファイル形式: ~a" filename))
@@ -938,16 +1632,17 @@
           (write-string (string (code-char (+ (char-code #\A) c))) out))
         (terpri out))
       ;; データ行
-      (loop for r from min-row to max-row do
-        (loop for c from min-col to max-col
-              for first = t then nil do
-          (unless first (write-char #\, out))
-          (let* ((cell (get-cell (cell-name c r)))
-                 (text (if (and include-formulas (cell-formula cell))
-                           (format nil "=~S" (cell-formula cell))
-                           (cell-value-for-csv cell))))
-            (write-string (escape-csv-field text) out)))
-        (terpri out)))
+      (let ((*package* (find-package :ss-gui)))  ; パッケージプレフィックスなしで出力
+        (loop for r from min-row to max-row do
+          (loop for c from min-col to max-col
+                for first = t then nil do
+            (unless first (write-char #\, out))
+            (let* ((cell (get-cell (cell-name c r)))
+                   (text (if (and include-formulas (cell-formula cell))
+                             (format nil "=~S" (cell-formula cell))
+                             (cell-value-for-csv cell))))
+              (write-string (escape-csv-field text) out)))
+          (terpri out))))
     (format t "~%Exported CSV: ~a~%" filename)
     filename))
 
@@ -991,11 +1686,13 @@
       ;; =で始まる → 数式として処理
       ((and (> (length trimmed) 0) (char= (char trimmed 0) #\=))
        (handler-case
-           (let ((form (read-from-string (subseq trimmed 1))))
+           (let* ((*package* (find-package :ss-gui))
+                  (form (read-from-string (subseq trimmed 1))))
              (values (eval-formula form) form))
          (error () (values trimmed nil))))
       ;; 数値を試す
-      (t (let ((num (ignore-errors (read-from-string trimmed))))
+      (t (let* ((*package* (find-package :ss-gui))
+                (num (ignore-errors (read-from-string trimmed))))
            (if (numberp num)
                num
                trimmed))))))
@@ -1471,10 +2168,12 @@
 
 (defun draw-cell-background (canvas x y val selected in-selection)
   "セルの背景のみを描画"
-  (let* ((px (+ *header-w* (* x *cell-w*)))
-         (py (+ *header-h* (* y *cell-h*)))
-         (px2 (+ px *cell-w*))
-         (py2 (+ py *cell-h*))
+  (let* ((px (col-left x))
+         (py (row-top y))
+         (w (col-width x))
+         (h (row-height y))
+         (px2 (+ px w))
+         (py2 (+ py h))
          ;; 値の型によって背景色を変える
          (bg (cond
                (selected "#cce5ff")                    ; カーソル位置
@@ -1497,26 +2196,22 @@
 (defun draw-cell-text (canvas x y val)
   "セルのテキストのみを描画（数値は右寄せ、それ以外は左寄せ）"
   (when val
-    (let* ((px (+ *header-w* (* x *cell-w*)))
-           (py (+ *header-h* (* y *cell-h*)))
+    (let* ((px (col-left x))
+           (py (row-top y))
+           (w (col-width x))
+           (h (row-height y))
            (display-text (format-value val))
            (path (widget-path canvas))
-           ;; テキストの概算幅（1文字約7ピクセル）
-           (text-width (* (length display-text) 7))
-           ;; はみ出し可能なセル数
-           (overflow-cells (count-overflow-cells x y))
-           ;; 使用可能な幅
-           (available-width (+ *cell-w* (* overflow-cells *cell-w*)))
            ;; 数値かどうか
            (is-number (numberp val)))
       ;; 数値は右寄せ、それ以外は左寄せ
       (if is-number
           ;; 右寄せ（anchor: e）
           (format-wish "~a create text ~a ~a -anchor e -text {~a} -font {Consolas 10}"
-                       path (+ px *cell-w* -4) (+ py (floor *cell-h* 2)) display-text)
-          ;; 左寄せ（anchor: w）- テキストがセル幅を超える場合ははみ出し表示
+                       path (+ px w -4) (+ py (floor h 2)) display-text)
+          ;; 左寄せ（anchor: w）
           (format-wish "~a create text ~a ~a -anchor w -text {~a} -font {Consolas 10}"
-                       path (+ px 4) (+ py (floor *cell-h* 2)) display-text)))))
+                       path (+ px 4) (+ py (floor h 2)) display-text)))))
 
 (defun draw-headers (canvas)
   "列名(A,B,C...)と行番号(1,2,3...)のヘッダーを描画"
@@ -1526,22 +2221,24 @@
                  path *header-w* *header-h*)
     ;; 列名ヘッダー
     (dotimes (x *cols*)
-      (let* ((px (+ *header-w* (* x *cell-w*)))
-             (px2 (+ px *cell-w*))
+      (let* ((px (col-left x))
+             (w (col-width x))
+             (px2 (+ px w))
              (col-name (string (code-char (+ (char-code #\A) x)))))
         (format-wish "~a create rectangle ~a 0 ~a ~a -fill {#e0e0e0} -outline gray"
                      path px px2 *header-h*)
         (format-wish "~a create text ~a ~a -anchor center -text {~a} -font {Consolas 11 bold}"
-                     path (+ px (floor *cell-w* 2)) (floor *header-h* 2) col-name)))
+                     path (+ px (floor w 2)) (floor *header-h* 2) col-name)))
     ;; 行番号ヘッダー
     (dotimes (y *rows*)
-      (let* ((py (+ *header-h* (* y *cell-h*)))
-             (py2 (+ py *cell-h*))
+      (let* ((py (row-top y))
+             (h (row-height y))
+             (py2 (+ py h))
              (row-num (1+ y)))
         (format-wish "~a create rectangle 0 ~a ~a ~a -fill {#e0e0e0} -outline gray"
                      path py *header-w* py2)
         (format-wish "~a create text ~a ~a -anchor center -text {~a} -font {Consolas 11 bold}"
-                     path (floor *header-w* 2) (+ py (floor *cell-h* 2)) row-num)))))
+                     path (floor *header-w* 2) (+ py (floor h 2)) row-num)))))
 
 (defun redraw (canvas)
   "画面全体を再描画（2パス：背景→テキスト）"
@@ -1577,7 +2274,8 @@
 
 (defun update-text-input (text-widget)
   "現在セルの内容をTextウィジェットに表示"
-  (let ((c (current-cell)))
+  (let ((c (current-cell))
+        (*package* (find-package :ss-gui)))  ; パッケージプレフィックスなしで表示
     (cond
       ;; 数式があれば =(...) 形式で表示
       ((cell-formula c)
@@ -1615,7 +2313,8 @@
         (let ((form nil))
           ;; 構文解析
           (handler-case
-              (setf form (read-from-string (subseq raw 1)))
+              (let ((*package* (find-package :ss-gui)))
+                (setf form (read-from-string (subseq raw 1))))
             (end-of-file ()
               (setf (cell-value cell) (format-error-message :syntax "式が不完全です")
                     (cell-formula cell) nil
@@ -1645,7 +2344,8 @@
                   (update-dependencies cell-nm nil))))))
         ;; それ以外 → 通常の値として解釈
         (let ((parsed (handler-case 
-                          (read-from-string raw)
+                          (let ((*package* (find-package :ss-gui)))
+                            (read-from-string raw))
                         (end-of-file () nil)
                         (error () raw))))
           (setf (cell-formula cell) nil
@@ -1713,12 +2413,81 @@
   (redraw canvas))
 
 ;;;; =========================
+;;;; ダイアログ
+;;;; =========================
+
+;; 入力ダイアログの結果を保持する変数
+(defparameter *input-dialog-result* nil)
+
+(defun show-size-dialog (title prompt default-value callback)
+  "サイズ入力ダイアログを表示。callbackは入力値を受け取る関数"
+  ;; ダイアログウィンドウを作成
+  (let* ((dlg (make-instance 'toplevel))
+         (lbl (make-instance 'label :master dlg :text prompt))
+         (ent (make-instance 'entry :master dlg :width 15))
+         (btn-frame (make-instance 'frame :master dlg))
+         (ok-btn (make-instance 'button :master btn-frame :text "OK" :width 8))
+         (cancel-btn (make-instance 'button :master btn-frame :text "Cancel" :width 8)))
+    
+    ;; ウィンドウ設定
+    (wm-title dlg title)
+    (format-wish "wm transient ~a ." (widget-path dlg))
+    (format-wish "wm resizable ~a 0 0" (widget-path dlg))
+    
+    ;; 初期値を設定
+    (setf (text ent) (princ-to-string default-value))
+    
+    ;; OKボタンの動作
+    (setf (command ok-btn)
+          (lambda ()
+            (let* ((input (text ent))
+                   (value (ignore-errors (parse-integer input))))
+              (destroy dlg)
+              (when (and value (> value 0))
+                (funcall callback value)))))
+    
+    ;; キャンセルボタンの動作
+    (setf (command cancel-btn)
+          (lambda ()
+            (destroy dlg)))
+    
+    ;; Enterキーでも確定
+    (bind ent "<Return>"
+          (lambda (evt)
+            (declare (ignore evt))
+            (let* ((input (text ent))
+                   (value (ignore-errors (parse-integer input))))
+              (destroy dlg)
+              (when (and value (> value 0))
+                (funcall callback value)))))
+    
+    ;; Escapeキーでキャンセル
+    (bind dlg "<Escape>"
+          (lambda (evt)
+            (declare (ignore evt))
+            (destroy dlg)))
+    
+    ;; レイアウト
+    (pack lbl :padx 10 :pady 5)
+    (pack ent :padx 10 :pady 5)
+    (pack btn-frame :pady 10)
+    (pack ok-btn :side :left :padx 5)
+    (pack cancel-btn :side :left :padx 5)
+    
+    ;; フォーカスを入力欄に
+    (focus ent)
+    (format-wish "~a selection range 0 end" (widget-path ent))
+    
+    ;; モーダルにする
+    (format-wish "grab ~a" (widget-path dlg))))
+
+;;;; =========================
 ;;;; メイン：GUIの構築と起動
 ;;;; =========================
 
 (defun update-window-title ()
   "ウィンドウタイトルを更新"
-  (wm-title *tk* (format nil "Spreadsheet v0.4.3 [~Dx~D]~a" 
+  (wm-title *tk* (format nil "Spreadsheet v0.5 [~Dx~D]~a" 
                          *cols* *rows*
                          (if *current-file* 
                              (format nil " - ~a" (file-namestring *current-file*))
@@ -1740,24 +2509,25 @@
   (setf *clipboard* nil)
   (clear-dependencies)
   (setf *current-file* nil)
+  (init-sizes)  ; 列幅・行高さを初期化
   
   (with-ltk ()
     (update-window-title)
     
     ;; ウィジェット作成
     (let* ((input-frame (make-instance 'frame))
-           ;; 複数行入力用Textウィジェット
+           ;; 複数行入力用Textウィジェット（固定幅フォント）
            (input-text (make-instance 'text
                                       :master input-frame
                                       :width 80
                                       :height input-lines
-                                      :font "Consolas 11"))
+                                      :font "TkFixedFont"))
            (input-scroll (make-instance 'scrollbar 
                                         :master input-frame
                                         :orientation :vertical))
            (canvas (make-instance 'canvas
-                                  :width (+ *header-w* (* *cols* *cell-w*))
-                                  :height (+ *header-h* (* *rows* *cell-h*))))
+                                  :width (total-width)
+                                  :height (total-height)))
            ;; メニューバー
            (mb (make-menubar))
            (file-menu (make-menu mb "File"))
@@ -1910,6 +2680,34 @@
                          (redraw canvas)
                          (update-text-input input-text)))
       
+      (add-separator edit-menu)
+      
+      (make-menubutton edit-menu "Insert Row"
+                       (lambda ()
+                         (insert-row *cur-y*)
+                         (configure canvas :height (total-height))
+                         (redraw canvas)))
+      
+      (make-menubutton edit-menu "Insert Column"
+                       (lambda ()
+                         (insert-col *cur-x*)
+                         (configure canvas :width (total-width))
+                         (redraw canvas)))
+      
+      (make-menubutton edit-menu "Delete Row"
+                       (lambda ()
+                         (delete-row *cur-y*)
+                         (configure canvas :height (total-height))
+                         (redraw canvas)
+                         (update-text-input input-text)))
+      
+      (make-menubutton edit-menu "Delete Column"
+                       (lambda ()
+                         (delete-col *cur-x*)
+                         (configure canvas :width (total-width))
+                         (redraw canvas)
+                         (update-text-input input-text)))
+      
       ;; キーボードショートカット (Ctrl+N, Ctrl+O, Ctrl+S)
       (bind *tk* "<Control-n>"
             (lambda (evt)
@@ -1984,6 +2782,9 @@
       ;; スクロールバーとテキストを連携
       (configure input-scroll :command (format nil "~a yview" (widget-path input-text)))
       (configure input-text :yscrollcommand (format nil "~a set" (widget-path input-scroll)))
+      ;; タブ幅を4文字分に設定
+      (format-wish "~a configure -tabs [list [expr {[font measure TkFixedFont 0] * 4}]]" 
+                   (widget-path input-text))
       
       ;; レイアウト
       (pack input-frame :fill :x :padx 2 :pady 2)
@@ -2042,42 +2843,206 @@
         ;; Shift+Enter で改行
         (format-wish "bind ~a <Shift-Return> {~a insert insert \\n; break}" path path))
 
-      ;; セルクリック → 選択開始
+      ;; セルクリック → 選択開始 または リサイズ開始
       (bind canvas "<ButtonPress-1>"
             (lambda (evt)
               (let ((mx (and evt (slot-value evt 'ltk::x)))
                     (my (and evt (slot-value evt 'ltk::y))))
-                (when (and mx my (numberp mx) (numberp my)
-                           (> mx *header-w*) (> my *header-h*))
-                  (let ((x (clamp (floor (/ (- mx *header-w*) *cell-w*)) 0 (1- *cols*)))
-                        (y (clamp (floor (/ (- my *header-h*) *cell-h*)) 0 (1- *rows*))))
-                    (setf *cur-x* x
-                          *cur-y* y
-                          *sel-start-x* x
-                          *sel-start-y* y
-                          *sel-end-x* x
-                          *sel-end-y* y
-                          *selecting* t)
-                    (update-text-input input-text)
-                    (redraw canvas))))
+                (when (and mx my (numberp mx) (numberp my))
+                  ;; ヘッダー領域でのリサイズチェック
+                  (let ((col-border (and (< my *header-h*) 
+                                         (near-col-border-p mx 4)))
+                        (row-border (and (< mx *header-w*) 
+                                         (near-row-border-p my 4))))
+                    (cond
+                      ;; 列幅リサイズ開始
+                      (col-border
+                       (setf *resize-mode* :col
+                             *resize-index* col-border
+                             *resize-start* mx))
+                      ;; 行高さリサイズ開始
+                      (row-border
+                       (setf *resize-mode* :row
+                             *resize-index* row-border
+                             *resize-start* my))
+                      ;; 通常のセル選択
+                      ((and (> mx *header-w*) (> my *header-h*))
+                       (let ((x (clamp (find-col-at mx) 0 (1- *cols*)))
+                             (y (clamp (find-row-at my) 0 (1- *rows*))))
+                         (setf *cur-x* x
+                               *cur-y* y
+                               *sel-start-x* x
+                               *sel-start-y* y
+                               *sel-end-x* x
+                               *sel-end-y* y
+                               *selecting* t)
+                         (update-text-input input-text)
+                         (redraw canvas)))))))
               (focus canvas)))
 
-      ;; ドラッグ → 選択範囲拡張
+      ;; ドラッグ → 選択範囲拡張 または リサイズ
       (bind canvas "<B1-Motion>"
             (lambda (evt)
-              (when *selecting*
-                (let ((mx (and evt (slot-value evt 'ltk::x)))
-                      (my (and evt (slot-value evt 'ltk::y))))
-                  (when (and mx my (numberp mx) (numberp my))
-                    (setf *sel-end-x* (clamp (floor (/ (- mx *header-w*) *cell-w*)) 0 (1- *cols*))
-                          *sel-end-y* (clamp (floor (/ (- my *header-h*) *cell-h*)) 0 (1- *rows*)))
-                    (redraw canvas))))))
+              (let ((mx (and evt (slot-value evt 'ltk::x)))
+                    (my (and evt (slot-value evt 'ltk::y))))
+                (when (and mx my (numberp mx) (numberp my))
+                  (cond
+                    ;; 列幅リサイズ中
+                    ((eq *resize-mode* :col)
+                     (let* ((old-w (col-width *resize-index*))
+                            (delta (- mx *resize-start*))
+                            (new-w (max *min-cell-w* (+ old-w delta))))
+                       (set-col-width *resize-index* new-w)
+                       (setf *resize-start* mx)
+                       ;; キャンバスサイズ更新
+                       (configure canvas :width (total-width))
+                       (redraw canvas)))
+                    ;; 行高さリサイズ中
+                    ((eq *resize-mode* :row)
+                     (let* ((old-h (row-height *resize-index*))
+                            (delta (- my *resize-start*))
+                            (new-h (max *min-cell-h* (+ old-h delta))))
+                       (set-row-height *resize-index* new-h)
+                       (setf *resize-start* my)
+                       ;; キャンバスサイズ更新
+                       (configure canvas :height (total-height))
+                       (redraw canvas)))
+                    ;; 通常の選択
+                    (*selecting*
+                     (let ((x (find-col-at mx))
+                           (y (find-row-at my)))
+                       (when (>= x 0)
+                         (setf *sel-end-x* (clamp x 0 (1- *cols*))))
+                       (when (>= y 0)
+                         (setf *sel-end-y* (clamp y 0 (1- *rows*)))))
+                     (redraw canvas)))))))
 
       ;; ドラッグ終了
       (bind canvas "<ButtonRelease-1>"
             (lambda (evt)
               (declare (ignore evt))
-              (setf *selecting* nil)))
+              (setf *selecting* nil
+                    *resize-mode* nil
+                    *resize-index* nil)))
+
+      ;; 右クリック用の変数
+      (let ((context-col nil)   ; 右クリックされた列
+            (context-row nil))  ; 右クリックされた行
+        
+        ;; 列ヘッダー用コンテキストメニュー作成
+        (format-wish "menu .colmenu -tearoff 0")
+        (format-wish ".colmenu add command -label {Insert Column} -command {}")
+        (format-wish ".colmenu add command -label {Delete Column} -command {}")
+        (format-wish ".colmenu add separator")
+        (format-wish ".colmenu add command -label {Column Width...} -command {}")
+        
+        ;; 行ヘッダー用コンテキストメニュー作成
+        (format-wish "menu .rowmenu -tearoff 0")
+        (format-wish ".rowmenu add command -label {Insert Row} -command {}")
+        (format-wish ".rowmenu add command -label {Delete Row} -command {}")
+        (format-wish ".rowmenu add separator")
+        (format-wish ".rowmenu add command -label {Row Height...} -command {}")
+        
+        ;; 右クリック → コンテキストメニュー表示
+        (bind canvas "<ButtonPress-3>"
+              (lambda (evt)
+                (let ((mx (and evt (slot-value evt 'ltk::x)))
+                      (my (and evt (slot-value evt 'ltk::y))))
+                  (when (and mx my (numberp mx) (numberp my))
+                    (cond
+                      ;; 列ヘッダー上で右クリック
+                      ((and (< my *header-h*) (>= mx *header-w*))
+                       (setf context-col (find-col-at mx))
+                       (when (and context-col (>= context-col 0))
+                         ;; メニューコマンドを更新
+                         (format-wish ".colmenu entryconfigure 0 -command {event generate . <<ColInsert>>}")
+                         (format-wish ".colmenu entryconfigure 1 -command {event generate . <<ColDelete>>}")
+                         (format-wish ".colmenu entryconfigure 3 -command {event generate . <<ColWidth>>}")
+                         ;; メニュー表示（画面座標を取得）
+                         (format-wish "tk_popup .colmenu [expr [winfo rootx ~a] + ~a] [expr [winfo rooty ~a] + ~a]"
+                                      (widget-path canvas) mx (widget-path canvas) my)))
+                      
+                      ;; 行ヘッダー上で右クリック
+                      ((and (< mx *header-w*) (>= my *header-h*))
+                       (setf context-row (find-row-at my))
+                       (when (and context-row (>= context-row 0))
+                         ;; メニューコマンドを更新
+                         (format-wish ".rowmenu entryconfigure 0 -command {event generate . <<RowInsert>>}")
+                         (format-wish ".rowmenu entryconfigure 1 -command {event generate . <<RowDelete>>}")
+                         (format-wish ".rowmenu entryconfigure 3 -command {event generate . <<RowHeight>>}")
+                         ;; メニュー表示
+                         (format-wish "tk_popup .rowmenu [expr [winfo rootx ~a] + ~a] [expr [winfo rooty ~a] + ~a]"
+                                      (widget-path canvas) mx (widget-path canvas) my))))))))
+        
+        ;; 列挿入イベント
+        (bind *tk* "<<ColInsert>>"
+              (lambda (evt)
+                (declare (ignore evt))
+                (when context-col
+                  (insert-col context-col)
+                  (configure canvas :width (total-width))
+                  (redraw canvas))))
+        
+        ;; 列削除イベント
+        (bind *tk* "<<ColDelete>>"
+              (lambda (evt)
+                (declare (ignore evt))
+                (when context-col
+                  (delete-col context-col)
+                  (configure canvas :width (total-width))
+                  (redraw canvas)
+                  (update-text-input input-text))))
+        
+        ;; 列幅設定イベント
+        (bind *tk* "<<ColWidth>>"
+              (lambda (evt)
+                (declare (ignore evt))
+                (when context-col
+                  (let* ((current-w (col-width context-col))
+                         (col-name (string (code-char (+ (char-code #\A) context-col))))
+                         (target-col context-col))
+                    (show-size-dialog "Column Width" 
+                                      (format nil "Width for column ~a:" col-name)
+                                      current-w
+                                      (lambda (w)
+                                        (set-col-width target-col w)
+                                        (configure canvas :width (total-width))
+                                        (redraw canvas)))))))
+        
+        ;; 行挿入イベント
+        (bind *tk* "<<RowInsert>>"
+              (lambda (evt)
+                (declare (ignore evt))
+                (when context-row
+                  (insert-row context-row)
+                  (configure canvas :height (total-height))
+                  (redraw canvas))))
+        
+        ;; 行削除イベント
+        (bind *tk* "<<RowDelete>>"
+              (lambda (evt)
+                (declare (ignore evt))
+                (when context-row
+                  (delete-row context-row)
+                  (configure canvas :height (total-height))
+                  (redraw canvas)
+                  (update-text-input input-text))))
+        
+        ;; 行高さ設定イベント
+        (bind *tk* "<<RowHeight>>"
+              (lambda (evt)
+                (declare (ignore evt))
+                (when context-row
+                  (let* ((current-h (row-height context-row))
+                         (row-num (1+ context-row))
+                         (target-row context-row))
+                    (show-size-dialog "Row Height"
+                                      (format nil "Height for row ~a:" row-num)
+                                      current-h
+                                      (lambda (h)
+                                        (set-row-height target-row h)
+                                        (configure canvas :height (total-height))
+                                        (redraw canvas))))))))
 
       ;; Ctrl+C → システムクリップボードにコピー
       (bind canvas "<Control-c>"
@@ -2245,7 +3210,7 @@
       (focus canvas))))
 
 ;;; ロード時メッセージ
-(format t "~%=== Spreadsheet GUI v0.4.3 ===~%")
+(format t "~%=== Spreadsheet GUI v0.5 ===~%")
 (format t "Lisp Powered Edition~%~%")
 (format t "起動: (ss-gui:start)~%")
 (format t "~%基本操作:~%")
@@ -2268,4 +3233,4 @@
 (format t "  Ctrl+N            : 新規作成~%")
 (format t "  Ctrl+O            : ファイルを開く~%")
 (format t "  Ctrl+S            : 保存~%")
-(format t "~%v0.4.3 機能: Undo/Redo、ファイルメニュー、CSV入出力~%")
+(format t "~%v0.5 新機能: 列幅/行高さ調整、行/列の挿入/削除~%")

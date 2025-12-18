@@ -4,10 +4,10 @@
 *.lib
 *.o
 *.a
+tmp.lisp
 
 # SBCL specific
 *.core
-tmp.lisp
 
 # Editor backups
 *~
