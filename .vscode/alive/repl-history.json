@@ -1,1 +1,1 @@
-[{"pkgName":"cl-user","text":"(ss-gui:start :rows 30 :cols 16 :input-lines 3)"},{"pkgName":"cl-user","text":"(load \"spreadsheet-gui.lisp\")"},{"pkgName":"cl-user","text":"(ss-gui:start)"}]
+[{"pkgName":"cl-user","text":"(ss-gui:start)"},{"pkgName":"cl-user","text":"(load \"spreadsheet-gui.lisp\")"},{"pkgName":"cl-user","text":"(ss-gui:start :rows 30 :cols 16 :input-lines 3)"}]
