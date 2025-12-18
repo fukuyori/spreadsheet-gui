@@ -2,7 +2,7 @@
 
 A Lisp-powered spreadsheet application built with Common Lisp and LTK
 
-![Version](https://img.shields.io/badge/version-0.4.2-blue.svg)
+![Version](https://img.shields.io/badge/version-0.4.3-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -16,7 +16,7 @@ A unique spreadsheet where formulas are written in Lisp S-expressions. Cells can
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ [ファイル(F)] [編集(E)]                                              │
+│ [File] [Edit]                                                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │ =(+ A1 5)                                                           │
 ├────┬────────────┬────────────────────────┬──────────┬───────────────┤
@@ -133,28 +133,28 @@ sbcl --load quicklisp.lisp
 
 ## Menus
 
-### File Menu (ファイル)
+### File Menu
 
 | Item | Description |
 |------|-------------|
-| 新規作成(N) | Create new empty sheet |
-| 開く(O)... | Open .ssp file |
-| 保存(S) | Save to current file |
-| 名前を付けて保存(A)... | Save as new file |
-| CSVインポート... | Import from CSV |
-| CSVエクスポート... | Export to CSV |
-| 終了(X) | Exit application |
+| New | Create new empty sheet |
+| Open... | Open .ssp file |
+| Save | Save to current file |
+| Save As... | Save as new file |
+| Import CSV... | Import from CSV |
+| Export CSV... | Export to CSV |
+| Exit | Exit application |
 
-### Edit Menu (編集)
+### Edit Menu
 
 | Item | Description |
 |------|-------------|
-| 元に戻す(U) | Undo (Ctrl+Z) |
-| やり直し(R) | Redo (Ctrl+Y) |
-| 切り取り(X) | Cut (Ctrl+X) |
-| コピー(C) | Copy (Ctrl+C) |
-| 貼り付け(V) | Paste (Ctrl+V) |
-| 削除 | Delete selection |
+| Undo | Undo (Ctrl+Z) |
+| Redo | Redo (Ctrl+Y) |
+| Cut | Cut (Ctrl+X) |
+| Copy | Copy (Ctrl+C) |
+| Paste | Paste (Ctrl+V) |
+| Delete | Delete selection |
 
 ## File Operations
 
@@ -294,7 +294,8 @@ When A1 changes to 20:
 
 ## Version History
 
-### v0.4.2 (Current)
+### v0.4.3 (Current)
+- English menu labels (File, Edit)
 - Number right-alignment in cells
 - File menu with save/load (.ssp format)
 - Edit menu with Undo/Redo/Cut/Copy/Paste

@@ -2,7 +2,7 @@
 ;;;; spreadsheet-gui.lisp
 ;;;; Common Lisp + LTK で作るシンプルな表計算ソフト
 ;;;; 
-;;;; Version: 0.4.2
+;;;; Version: 0.4.3
 ;;;; Date: 2025-01-15
 ;;;; 
 ;;;; 機能:
@@ -803,7 +803,7 @@
            :format-version 1
            :metadata (:created ,(iso-timestamp)
                       :modified ,(iso-timestamp)
-                      :app-version "0.4.2")
+                      :app-version "0.4.3")
            :grid (:rows ,*rows* :cols ,*cols*)
            :cells ,cells-data)
          out)
@@ -1718,7 +1718,7 @@
 
 (defun update-window-title ()
   "ウィンドウタイトルを更新"
-  (wm-title *tk* (format nil "Spreadsheet v0.4.2 [~Dx~D]~a" 
+  (wm-title *tk* (format nil "Spreadsheet v0.4.3 [~Dx~D]~a" 
                          *cols* *rows*
                          (if *current-file* 
                              (format nil " - ~a" (file-namestring *current-file*))
@@ -1760,18 +1760,18 @@
                                   :height (+ *header-h* (* *rows* *cell-h*))))
            ;; メニューバー
            (mb (make-menubar))
-           (file-menu (make-menu mb "ファイル(F)"))
-           (edit-menu (make-menu mb "編集(E)")))
+           (file-menu (make-menu mb "File"))
+           (edit-menu (make-menu mb "Edit")))
       
       ;; ファイルメニュー項目
-      (make-menubutton file-menu "新規作成(N)        Ctrl+N"
+      (make-menubutton file-menu "New             Ctrl+N"
                        (lambda ()
                          (new-sheet)
                          (update-window-title)
                          (update-text-input input-text)
                          (redraw canvas)))
       
-      (make-menubutton file-menu "開く(O)...        Ctrl+O"
+      (make-menubutton file-menu "Open...         Ctrl+O"
                        (lambda ()
                          (let ((filename (get-open-file 
                                           :filetypes '(("Spreadsheet" "*.ssp")
@@ -1784,14 +1784,14 @@
                                    (update-text-input input-text)
                                    (redraw canvas))
                                (error (e)
-                                 (do-msg (format nil "読み込みエラー: ~a" e))))))))
+                                 (do-msg (format nil "Load Error: ~a" e))))))))
       
-      (make-menubutton file-menu "保存(S)            Ctrl+S"
+      (make-menubutton file-menu "Save            Ctrl+S"
                        (lambda ()
                          (if *current-file*
                              (progn
                                (save *current-file*)
-                               (do-msg (format nil "保存しました: ~a" 
+                               (do-msg (format nil "Saved: ~a" 
                                               (file-namestring *current-file*))))
                              ;; ファイルがない場合は名前を付けて保存
                              (let ((filename (get-save-file 
@@ -1803,10 +1803,10 @@
                                    (setf filename (concatenate 'string filename ".ssp")))
                                  (save filename)
                                  (update-window-title)
-                                 (do-msg (format nil "保存しました: ~a" 
+                                 (do-msg (format nil "Saved: ~a" 
                                                 (file-namestring filename))))))))
       
-      (make-menubutton file-menu "名前を付けて保存(A)..."
+      (make-menubutton file-menu "Save As..."
                        (lambda ()
                          (let ((filename (get-save-file 
                                           :filetypes '(("Spreadsheet" "*.ssp")
@@ -1817,12 +1817,12 @@
                                (setf filename (concatenate 'string filename ".ssp")))
                              (save filename)
                              (update-window-title)
-                             (do-msg (format nil "保存しました: ~a" 
+                             (do-msg (format nil "Saved: ~a" 
                                             (file-namestring filename)))))))
       
       (add-separator file-menu)
       
-      (make-menubutton file-menu "CSVインポート..."
+      (make-menubutton file-menu "Import CSV..."
                        (lambda ()
                          (let ((filename (get-open-file 
                                           :filetypes '(("CSV files" "*.csv")
@@ -1836,12 +1836,12 @@
                                    (update-window-title)
                                    (update-text-input input-text)
                                    (redraw canvas)
-                                   (do-msg (format nil "インポートしました: ~a" 
+                                   (do-msg (format nil "Imported: ~a" 
                                                   (file-namestring filename))))
                                (error (e)
-                                 (do-msg (format nil "インポートエラー: ~a" e))))))))
+                                 (do-msg (format nil "Import Error: ~a" e))))))))
       
-      (make-menubutton file-menu "CSVエクスポート..."
+      (make-menubutton file-menu "Export CSV..."
                        (lambda ()
                          (let ((filename (get-save-file 
                                           :filetypes '(("CSV files" "*.csv")
@@ -1853,25 +1853,25 @@
                              (handler-case
                                  (progn
                                    (export-csv filename)
-                                   (do-msg (format nil "エクスポートしました: ~a" 
+                                   (do-msg (format nil "Exported: ~a" 
                                                   (file-namestring filename))))
                                (error (e)
-                                 (do-msg (format nil "エクスポートエラー: ~a" e))))))))
+                                 (do-msg (format nil "Export Error: ~a" e))))))))
       
       (add-separator file-menu)
       
-      (make-menubutton file-menu "終了(X)"
+      (make-menubutton file-menu "Exit"
                        (lambda ()
                          (setf *exit-mainloop* t)))
       
       ;; 編集メニュー項目
-      (make-menubutton edit-menu "元に戻す(U)        Ctrl+Z"
+      (make-menubutton edit-menu "Undo            Ctrl+Z"
                        (lambda ()
                          (when (undo)
                            (update-text-input input-text)
                            (redraw canvas))))
       
-      (make-menubutton edit-menu "やり直し(R)        Ctrl+Y"
+      (make-menubutton edit-menu "Redo            Ctrl+Y"
                        (lambda ()
                          (when (redo)
                            (update-text-input input-text)
@@ -1879,7 +1879,7 @@
       
       (add-separator edit-menu)
       
-      (make-menubutton edit-menu "切り取り(X)        Ctrl+X"
+      (make-menubutton edit-menu "Cut             Ctrl+X"
                        (lambda ()
                          (copy-to-system-clipboard)
                          (clear-selection-cells)
@@ -1887,11 +1887,11 @@
                          (redraw canvas)
                          (update-text-input input-text)))
       
-      (make-menubutton edit-menu "コピー(C)          Ctrl+C"
+      (make-menubutton edit-menu "Copy            Ctrl+C"
                        (lambda ()
                          (copy-to-system-clipboard)))
       
-      (make-menubutton edit-menu "貼り付け(V)        Ctrl+V"
+      (make-menubutton edit-menu "Paste           Ctrl+V"
                        (lambda ()
                          (let ((sys-clip (get-system-clipboard)))
                            (if (and sys-clip (> (length sys-clip) 0))
@@ -1903,7 +1903,7 @@
       
       (add-separator edit-menu)
       
-      (make-menubutton edit-menu "削除               Delete"
+      (make-menubutton edit-menu "Delete          Delete"
                        (lambda ()
                          (clear-selection-cells)
                          (clear-selection)
@@ -1990,12 +1990,6 @@
       (pack input-scroll :side :right :fill :y)
       (pack input-text :side :left :fill :both :expand t)
       (pack canvas)
-
-      ;; サンプルデータ
-      (setf (cell-value (get-cell "A1")) 10)
-      (setf (cell-value (get-cell "A2")) 20)
-      (setf (cell-value (get-cell "A3")) 30)
-      (setf (cell-value (get-cell "B1")) '(1 2 3 4 5))
 
       ;; 初期描画
       (update-text-input input-text)
@@ -2251,7 +2245,7 @@
       (focus canvas))))
 
 ;;; ロード時メッセージ
-(format t "~%=== Spreadsheet GUI v0.4.2 ===~%")
+(format t "~%=== Spreadsheet GUI v0.4.3 ===~%")
 (format t "Lisp Powered Edition~%~%")
 (format t "起動: (ss-gui:start)~%")
 (format t "~%基本操作:~%")
@@ -2274,4 +2268,4 @@
 (format t "  Ctrl+N            : 新規作成~%")
 (format t "  Ctrl+O            : ファイルを開く~%")
 (format t "  Ctrl+S            : 保存~%")
-(format t "~%v0.4.2 機能: Undo/Redo、ファイルメニュー、CSV入出力~%")
+(format t "~%v0.4.3 機能: Undo/Redo、ファイルメニュー、CSV入出力~%")
