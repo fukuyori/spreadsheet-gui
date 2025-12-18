@@ -2,7 +2,7 @@
 ;;;; spreadsheet-gui.lisp
 ;;;; Common Lisp + LTK で作るシンプルな表計算ソフト
 ;;;; 
-;;;; Version: 0.4
+;;;; Version: 0.4.1
 ;;;; Date: 2025-01-15
 ;;;; 
 ;;;; 機能:
@@ -803,7 +803,7 @@
            :format-version 1
            :metadata (:created ,(iso-timestamp)
                       :modified ,(iso-timestamp)
-                      :app-version "0.4")
+                      :app-version "0.4.1")
            :grid (:rows ,*rows* :cols ,*cols*)
            :cells ,cells-data)
          out)
@@ -1495,7 +1495,7 @@
         count t))
 
 (defun draw-cell-text (canvas x y val)
-  "セルのテキストのみを描画（右側の空セルにはみ出し可能）"
+  "セルのテキストのみを描画（数値は右寄せ、それ以外は左寄せ）"
   (when val
     (let* ((px (+ *header-w* (* x *cell-w*)))
            (py (+ *header-h* (* y *cell-h*)))
@@ -1506,13 +1506,15 @@
            ;; はみ出し可能なセル数
            (overflow-cells (count-overflow-cells x y))
            ;; 使用可能な幅
-           (available-width (+ *cell-w* (* overflow-cells *cell-w*))))
-      ;; テキストがセル幅を超える場合、クリップ領域を設定
-      (if (> text-width (- *cell-w* 8))
-          ;; はみ出し表示（空セルがある場合）
-          (format-wish "~a create text ~a ~a -anchor w -text {~a} -font {Consolas 10}"
-                       path (+ px 4) (+ py (floor *cell-h* 2)) display-text)
-          ;; 通常表示
+           (available-width (+ *cell-w* (* overflow-cells *cell-w*)))
+           ;; 数値かどうか
+           (is-number (numberp val)))
+      ;; 数値は右寄せ、それ以外は左寄せ
+      (if is-number
+          ;; 右寄せ（anchor: e）
+          (format-wish "~a create text ~a ~a -anchor e -text {~a} -font {Consolas 10}"
+                       path (+ px *cell-w* -4) (+ py (floor *cell-h* 2)) display-text)
+          ;; 左寄せ（anchor: w）- テキストがセル幅を超える場合ははみ出し表示
           (format-wish "~a create text ~a ~a -anchor w -text {~a} -font {Consolas 10}"
                        path (+ px 4) (+ py (floor *cell-h* 2)) display-text)))))
 
@@ -1716,7 +1718,7 @@
 
 (defun update-window-title ()
   "ウィンドウタイトルを更新"
-  (wm-title *tk* (format nil "Spreadsheet v0.4 [~Dx~D]~a" 
+  (wm-title *tk* (format nil "Spreadsheet v0.4.1 [~Dx~D]~a" 
                          *cols* *rows*
                          (if *current-file* 
                              (format nil " - ~a" (file-namestring *current-file*))
@@ -2249,7 +2251,7 @@
       (focus canvas))))
 
 ;;; ロード時メッセージ
-(format t "~%=== Spreadsheet GUI v0.4 ===~%")
+(format t "~%=== Spreadsheet GUI v0.4.1 ===~%")
 (format t "Lisp Powered Edition~%~%")
 (format t "起動: (ss-gui:start)~%")
 (format t "~%基本操作:~%")
@@ -2272,4 +2274,4 @@
 (format t "  Ctrl+N            : 新規作成~%")
 (format t "  Ctrl+O            : ファイルを開く~%")
 (format t "  Ctrl+S            : 保存~%")
-(format t "~%v0.4 機能: Undo/Redo、ファイルメニュー、CSV入出力~%")
+(format t "~%v0.4.1 機能: Undo/Redo、ファイルメニュー、CSV入出力~%")

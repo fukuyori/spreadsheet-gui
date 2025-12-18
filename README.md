@@ -2,7 +2,7 @@
 
 A Lisp-powered spreadsheet application built with Common Lisp and LTK
 
-![Version](https://img.shields.io/badge/version-0.4-blue.svg)
+![Version](https://img.shields.io/badge/version-0.4.1-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -22,16 +22,18 @@ A unique spreadsheet where formulas are written in Lisp S-expressions. Cells can
 ├────┬────────────┬────────────────────────┬──────────┬───────────────┤
 │    │     A      │           B            │    C     │   ...         │
 ├────┼────────────┼────────────────────────┼──────────┼───────────────┤
-│  1 │     10     │ (1 2 3 4 5)            │          │               │
-│  2 │     15     │ ← Auto-updated!        │          │               │
-│  3 │     30     │ =(* A2 2)              │          │               │
+│  1 │         10 │ (1 2 3 4 5)            │          │               │
+│  2 │         15 │ ← Auto-updated!        │          │               │
+│  3 │         30 │ Hello                  │          │               │
 │ .. │            │                        │          │               │
 └────┴────────────┴────────────────────────┴──────────┴───────────────┘
+         ↑ Numbers right-aligned    ↑ Text left-aligned
 ```
 
 ## Features
 
 - **Direct Input Mode** - Start typing to begin editing immediately
+- **Number Right-Alignment** - Numbers displayed right-aligned, text left-aligned
 - **Undo/Redo** - Ctrl+Z/Y with up to 100 operations history
 - **File Save/Load** - Native `.ssp` format preserves formulas and values
 - **CSV Import/Export** - Interoperability with Excel, Google Sheets
@@ -292,7 +294,8 @@ When A1 changes to 20:
 
 ## Version History
 
-### v0.4 (Current)
+### v0.4.1 (Current)
+- Number right-alignment in cells
 - File menu with save/load (.ssp format)
 - Edit menu with Undo/Redo/Cut/Copy/Paste
 - Direct input mode (type to start editing)

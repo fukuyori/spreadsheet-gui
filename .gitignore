@@ -7,11 +7,14 @@
 
 # SBCL specific
 *.core
+tmp.lisp
 
 # Editor backups
 *~
 \#*\#
 .\#*
+.vscode/
+.gitignore
 
 # OS files
 .DS_Store
