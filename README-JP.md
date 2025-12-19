@@ -2,7 +2,7 @@
 
 Common LispとLTKで構築されたLisp式表計算アプリケーション
 
-![Version](https://img.shields.io/badge/version-0.5.2-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.3-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -329,7 +329,14 @@ ss-gui:*current-file*
 
 ## バージョン履歴
 
-### v0.5.2（現在）
+### v0.5.3（現在）
+- **let / let\* / setf** ローカル変数束縛と代入
+  - `let` 並列束縛
+  - `let*` 逐次束縛
+  - `setf` ローカル変数への代入
+  - body内に複数式を記述可能
+
+### v0.5.2
 - 拡張関数ライブラリ（150以上の関数）
   - 集合演算: intersection, union, set-difference, set-exclusive-or
   - 条件チェック: every, some, notevery, notany

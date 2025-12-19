@@ -2,7 +2,7 @@
 ;;;; spreadsheet-gui.lisp
 ;;;; Common Lisp + LTK で作るシンプルな表計算ソフト
 ;;;; 
-;;;; Version: 0.5.2
+;;;; Version: 0.5.3
 ;;;; Date: 2025-01-15
 ;;;; 
 ;;;; 機能:
@@ -1496,7 +1496,7 @@
            :format-version 1
            :metadata (:created ,(iso-timestamp)
                       :modified ,(iso-timestamp)
-                      :app-version "0.5.2")
+                      :app-version "0.5.3")
            :grid (:rows ,*rows* :cols ,*cols*)
            :cells ,cells-data)
          out)
@@ -1836,8 +1836,8 @@
     ;; 位置参照
     this-row this-col this-col-name this-cell-name
     cell-at rel rel-range
-    ;; lambda / apply / funcall
-    lambda apply funcall))
+    ;; lambda / apply / funcall / let / setf
+    lambda apply funcall let let* setf))
 
 ;;;; =========================
 ;;;; 数式評価エンジン（拡張版）
@@ -1964,11 +1964,25 @@
 (defparameter *lambda-env* nil)
 
 (defun lookup-var (sym)
-  "lambda環境から変数を探す"
+  "lambda環境から変数を探す
+   環境は (("VAR" . (value)) ...) の形式で、値はconsセルに格納"
   (let ((pair (assoc (symbol-name sym) *lambda-env* :test #'string-equal)))
     (if pair
-        (values (cdr pair) t)
+        (values (cadr pair) t)  ; (cdr pair) = (value), (cadr pair) = value
         (values nil nil))))
+
+(defun set-var (sym new-value)
+  "lambda環境の変数に値を設定"
+  (let ((pair (assoc (symbol-name sym) *lambda-env* :test #'string-equal)))
+    (if pair
+        (progn
+          (setf (car (cdr pair)) new-value)  ; 値を変更
+          new-value)
+        (error "Undefined variable: ~A" sym))))
+
+(defun make-binding (name value)
+  "変数束縛を作成（変更可能な形式）"
+  (cons name (list value)))
 
 (defun eval-formula (expr)
   "S式の数式を評価。Lispの非破壊関数をサポート。
@@ -2019,7 +2033,7 @@
             ;; クロージャとして現在の環境をキャプチャ
             (let ((captured-env *lambda-env*))
               (lambda (&rest args)
-                (let ((*lambda-env* (append (mapcar #'cons 
+                (let ((*lambda-env* (append (mapcar #'make-binding
                                                     (mapcar #'symbol-name params)
                                                     args)
                                             captured-env)))
@@ -2041,6 +2055,52 @@
           (loop for clause in (cdr expr)
                 when (eval-formula (car clause))
                 return (eval-formula (cadr clause))))
+         ;; LET - ローカル変数束縛（並列束縛）
+         ((string-equal op-name "LET")
+          (let* ((bindings (cadr expr))
+                 (body (cddr expr))
+                 ;; 全ての値を先に評価（並列束縛）
+                 (new-bindings (mapcar (lambda (b)
+                                         (make-binding 
+                                           (symbol-name (if (listp b) (car b) b))
+                                           (if (and (listp b) (cdr b))
+                                               (eval-formula (cadr b))
+                                               nil)))
+                                       bindings)))
+            (let ((*lambda-env* (append new-bindings *lambda-env*)))
+              ;; bodyの全式を評価し、最後の値を返す
+              (loop for form in body
+                    for result = (eval-formula form)
+                    finally (return result)))))
+         ;; LET* - ローカル変数束縛（逐次束縛）
+         ((string-equal op-name "LET*")
+          (let ((bindings (cadr expr))
+                (body (cddr expr)))
+            ;; 束縛を順番に追加しながら評価
+            (labels ((bind-sequentially (remaining-bindings)
+                       (if (null remaining-bindings)
+                           ;; 全束縛完了、bodyを評価
+                           (loop for form in body
+                                 for result = (eval-formula form)
+                                 finally (return result))
+                           ;; 次の束縛を処理
+                           (let* ((b (car remaining-bindings))
+                                  (var (symbol-name (if (listp b) (car b) b)))
+                                  (val (if (and (listp b) (cdr b))
+                                           (eval-formula (cadr b))
+                                           nil)))
+                             (let ((*lambda-env* (cons (make-binding var val) *lambda-env*)))
+                               (bind-sequentially (cdr remaining-bindings)))))))
+              (bind-sequentially bindings))))
+         ;; SETF - ローカル変数への代入
+         ((string-equal op-name "SETF")
+          (let ((place (cadr expr))
+                (value-expr (caddr expr)))
+            (if (symbolp place)
+                ;; 単純な変数への代入
+                (let ((new-value (eval-formula value-expr)))
+                  (set-var place new-value))
+                (format nil "ERR: setf only supports local variables"))))
          ;; AND（短絡評価）
          ((string-equal op-name "AND")
           (loop for arg in (cdr expr)
@@ -2485,7 +2545,7 @@
     "intersection" "union" "set-difference" "set-exclusive-or" "subsetp"
     "search" "mismatch"
     "assoc" "assoc-if" "rassoc" "rassoc-if" "pairlis" "acons" "getf"
-    "apply" "funcall" "lambda" "function"
+    "apply" "funcall" "lambda" "function" "let" "let*" "setf"
     "list" "cons" "car" "cdr" "first" "rest" "nth" "length" "elt"
     "append" "reverse" "sort" "stable-sort" "concatenate" "member" "subseq"
     "copy-list" "copy-seq" "copy-tree" "copy-alist"
@@ -2971,7 +3031,7 @@
 
 (defun update-window-title ()
   "ウィンドウタイトルを更新"
-  (wm-title *tk* (format nil "Spreadsheet v0.5.2 [~Dx~D]~a" 
+  (wm-title *tk* (format nil "Spreadsheet v0.5.3 [~Dx~D]~a" 
                          *cols* *rows*
                          (if *current-file* 
                              (format nil " - ~a" (file-namestring *current-file*))
@@ -3729,7 +3789,7 @@
       (focus canvas))))
 
 ;;; ロード時メッセージ
-(format t "~%=== Spreadsheet GUI v0.5.2 ===~%")
+(format t "~%=== Spreadsheet GUI v0.5.3 ===~%")
 (format t "Lisp Powered Edition~%~%")
 (format t "起動: (ss-gui:start)~%")
 (format t "~%基本操作:~%")
@@ -3752,4 +3812,4 @@
 (format t "  Ctrl+N            : 新規作成~%")
 (format t "  Ctrl+O            : ファイルを開く~%")
 (format t "  Ctrl+S            : 保存~%")
-(format t "~%v0.5.2 新機能: 関数150以上、sort :key対応、シンタックスハイライト、S式整形~%")
+(format t "~%v0.5.3 新機能: let/let*/setf、関数150以上、sort :key対応、シンタックスハイライト~%")

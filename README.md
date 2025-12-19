@@ -2,7 +2,7 @@
 
 A Lisp-powered spreadsheet application built with Common Lisp and LTK
 
-![Version](https://img.shields.io/badge/version-0.5.2-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.3-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -329,7 +329,14 @@ The `.ssp` format is a human-readable S-expression format:
 
 ## Version History
 
-### v0.5.2 (Current)
+### v0.5.3 (Current)
+- **let / let\* / setf** local variable binding and assignment
+  - `let` for parallel binding
+  - `let*` for sequential binding
+  - `setf` for modifying local variables
+  - Multiple expressions in body supported
+
+### v0.5.2
 - Extended function library (150+ functions)
   - Set operations: intersection, union, set-difference, set-exclusive-or
   - Conditionals: every, some, notevery, notany
