@@ -2,7 +2,7 @@
 ;;;; spreadsheet-gui.lisp
 ;;;; Common Lisp + LTK で作るシンプルな表計算ソフト
 ;;;; 
-;;;; Version: 0.5.1
+;;;; Version: 0.5.2
 ;;;; Date: 2025-01-15
 ;;;; 
 ;;;; 機能:
@@ -1496,7 +1496,7 @@
            :format-version 1
            :metadata (:created ,(iso-timestamp)
                       :modified ,(iso-timestamp)
-                      :app-version "0.5.1")
+                      :app-version "0.5.2")
            :grid (:rows ,*rows* :cols ,*cols*)
            :cells ,cells-data)
          out)
@@ -1770,6 +1770,10 @@
     sqrt expt log exp isqrt
     sin cos tan asin acos atan sinh cosh tanh
     gcd lcm
+    ;; 乱数
+    random
+    ;; ビット演算
+    logand logior logxor lognot ash logcount
     ;; 比較
     = /= < > <= >=
     equal equalp eq eql
@@ -1778,29 +1782,48 @@
     first second third fourth fifth sixth seventh eighth ninth tenth
     rest last butlast nthcdr
     append reverse length nth elt
-    member assoc find position
-    mapcar mapc maplist remove remove-if remove-if-not
-    reduce count count-if
-    subseq copy-list copy-seq
+    member assoc assoc-if rassoc rassoc-if
+    find find-if position position-if
+    getf get  ; plistアクセス
+    mapcar mapc maplist mapcon mapcan
+    remove remove-if remove-if-not remove-duplicates
+    reduce count count-if count-if-not
+    substitute substitute-if substitute-if-not
+    subseq copy-list copy-seq copy-tree copy-alist
     list-length
+    tree-equal sublis
+    ;; ソート（非破壊的に実装）
+    sort stable-sort
+    ;; 条件チェック
+    every some notevery notany
+    ;; 集合演算
+    intersection union set-difference set-exclusive-or subsetp
+    ;; 検索
+    search mismatch
     ;; リスト作成
-    make-list iota
+    make-list iota pairlis acons
     ;; 文字列
     string-upcase string-downcase string-capitalize
     string-trim string-left-trim string-right-trim
     concatenate subseq char
     string= string/= string< string> string<= string>=
-    string-equal
+    string-equal string-not-equal
+    string-lessp string-greaterp string-not-greaterp string-not-lessp
     parse-integer
     ;; 文字
-    char-upcase char-downcase char-code code-char
+    char-upcase char-downcase char-code code-char digit-char
+    char= char/= char< char> char<= char>=
+    char-equal char-not-equal char-lessp char-greaterp
     alpha-char-p digit-char-p upper-case-p lower-case-p
+    alphanumericp graphic-char-p
     ;; 論理
     not null and or
     ;; 述語
-    atom listp consp numberp integerp floatp rationalp
+    atom listp consp numberp integerp floatp rationalp realp complexp
     stringp symbolp characterp keywordp functionp
     zerop plusp minusp evenp oddp
+    ;; 型
+    type-of typep
     ;; 型変換
     float truncate round floor ceiling
     string coerce
@@ -1809,7 +1832,7 @@
     ;; 数学定数（変数として）
     pi
     ;; スプレッドシート専用
-    sum avg count range ref
+    sum avg cell-count range ref
     ;; 位置参照
     this-row this-col this-col-name this-cell-name
     cell-at rel rel-range
@@ -1889,9 +1912,11 @@
      (lambda (&rest args)
        (let ((nums (remove-if-not #'numberp (flatten args))))
          (if nums (float (/ (apply #'+ nums) (length nums))) 0))))
-    ((string-equal op-name "COUNT")
+    ((string-equal op-name "CELL-COUNT")
+     ;; スプレッドシート専用: 範囲内のセル数を数える
      (lambda (&rest args)
        (length (flatten args))))
+    ;; COUNT は CL の count を使用（get-function-by-name で処理）
     ;; 位置参照関数
     ((string-equal op-name "THIS-ROW") #'this-row)
     ((string-equal op-name "THIS-COL") #'this-col)
@@ -2050,6 +2075,24 @@
             (if (functionp fn)
                 (apply #'mapcar fn lists)
                 (format nil "ERR: not a function"))))
+         ;; FIND-IF / POSITION-IF
+         ((or (string-equal op-name "FIND-IF")
+              (string-equal op-name "POSITION-IF"))
+          (let* ((fn-expr (cadr expr))
+                 (fn (cond
+                       ((and (listp fn-expr) (eq (car fn-expr) 'function))
+                        (get-lisp-function (symbol-name (cadr fn-expr))))
+                       ((and (listp fn-expr)
+                             (string-equal (symbol-name (car fn-expr)) "LAMBDA"))
+                        (eval-formula fn-expr))
+                       (t (eval-formula fn-expr))))
+                 (seq (eval-formula (caddr expr))))
+            (if (functionp fn)
+                (funcall (if (string-equal op-name "FIND-IF")
+                             #'find-if
+                             #'position-if)
+                         fn seq)
+                (format nil "ERR: not a function"))))
          ;; REDUCE
          ((string-equal op-name "REDUCE")
           (let* ((fn-expr (cadr expr))
@@ -2099,10 +2142,11 @@
             (if (functionp fn)
                 (apply fn args)
                 (format nil "ERR: not a function"))))
-         ;; REMOVE-IF / REMOVE-IF-NOT / COUNT-IF
+         ;; REMOVE-IF / REMOVE-IF-NOT / COUNT-IF / COUNT-IF-NOT
          ((or (string-equal op-name "REMOVE-IF")
               (string-equal op-name "REMOVE-IF-NOT")
-              (string-equal op-name "COUNT-IF"))
+              (string-equal op-name "COUNT-IF")
+              (string-equal op-name "COUNT-IF-NOT"))
           (let* ((fn-expr (cadr expr))
                  (fn (cond
                        ((and (listp fn-expr) (eq (car fn-expr) 'function))
@@ -2116,8 +2160,142 @@
                 (funcall (cond
                           ((string-equal op-name "REMOVE-IF") #'remove-if)
                           ((string-equal op-name "REMOVE-IF-NOT") #'remove-if-not)
-                          (t #'count-if))
+                          ((string-equal op-name "COUNT-IF") #'count-if)
+                          (t #'count-if-not))
                          fn lst)
+                (format nil "ERR: not a function"))))
+         ;; SUBSTITUTE / SUBSTITUTE-IF / SUBSTITUTE-IF-NOT
+         ((or (string-equal op-name "SUBSTITUTE")
+              (string-equal op-name "SUBSTITUTE-IF")
+              (string-equal op-name "SUBSTITUTE-IF-NOT"))
+          (if (string-equal op-name "SUBSTITUTE")
+              ;; (substitute new old seq)
+              (let ((new (eval-formula (cadr expr)))
+                    (old (eval-formula (caddr expr)))
+                    (seq (eval-formula (cadddr expr))))
+                (substitute new old seq))
+              ;; (substitute-if new pred seq) / (substitute-if-not new pred seq)
+              (let* ((new (eval-formula (cadr expr)))
+                     (fn-expr (caddr expr))
+                     (fn (cond
+                           ((and (listp fn-expr) (eq (car fn-expr) 'function))
+                            (get-lisp-function (symbol-name (cadr fn-expr))))
+                           ((and (listp fn-expr)
+                                 (string-equal (symbol-name (car fn-expr)) "LAMBDA"))
+                            (eval-formula fn-expr))
+                           (t (eval-formula fn-expr))))
+                     (seq (eval-formula (cadddr expr))))
+                (if (functionp fn)
+                    (funcall (if (string-equal op-name "SUBSTITUTE-IF")
+                                 #'substitute-if
+                                 #'substitute-if-not)
+                             new fn seq)
+                    (format nil "ERR: not a function")))))
+         ;; EVERY / SOME / NOTEVERY / NOTANY
+         ((or (string-equal op-name "EVERY")
+              (string-equal op-name "SOME")
+              (string-equal op-name "NOTEVERY")
+              (string-equal op-name "NOTANY"))
+          (let* ((fn-expr (cadr expr))
+                 (fn (cond
+                       ((and (listp fn-expr) (eq (car fn-expr) 'function))
+                        (get-lisp-function (symbol-name (cadr fn-expr))))
+                       ((and (listp fn-expr)
+                             (string-equal (symbol-name (car fn-expr)) "LAMBDA"))
+                        (eval-formula fn-expr))
+                       (t (eval-formula fn-expr))))
+                 (seqs (mapcar #'eval-formula (cddr expr))))
+            (if (functionp fn)
+                (apply (cond
+                         ((string-equal op-name "EVERY") #'every)
+                         ((string-equal op-name "SOME") #'some)
+                         ((string-equal op-name "NOTEVERY") #'notevery)
+                         (t #'notany))
+                       fn seqs)
+                (format nil "ERR: not a function"))))
+         ;; ASSOC-IF / RASSOC-IF
+         ((or (string-equal op-name "ASSOC-IF")
+              (string-equal op-name "RASSOC-IF"))
+          (let* ((fn-expr (cadr expr))
+                 (fn (cond
+                       ((and (listp fn-expr) (eq (car fn-expr) 'function))
+                        (get-lisp-function (symbol-name (cadr fn-expr))))
+                       ((and (listp fn-expr)
+                             (string-equal (symbol-name (car fn-expr)) "LAMBDA"))
+                        (eval-formula fn-expr))
+                       (t (eval-formula fn-expr))))
+                 (alist (eval-formula (caddr expr))))
+            (if (functionp fn)
+                (funcall (if (string-equal op-name "ASSOC-IF")
+                             #'assoc-if
+                             #'rassoc-if)
+                         fn alist)
+                (format nil "ERR: not a function"))))
+         ;; SORT（非破壊的：コピーしてからソート、:key対応）
+         ((string-equal op-name "SORT")
+          (let* ((args (cdr expr))
+                 (seq (eval-formula (first args)))
+                 (pred-expr (second args))
+                 (pred (cond
+                         ((null pred-expr) #'<)
+                         ((and (listp pred-expr) (eq (car pred-expr) 'function))
+                          (get-lisp-function (symbol-name (cadr pred-expr))))
+                         ((and (listp pred-expr)
+                               (string-equal (symbol-name (car pred-expr)) "LAMBDA"))
+                          (eval-formula pred-expr))
+                         (t (eval-formula pred-expr))))
+                 ;; :key キーワード引数を探す
+                 (key-pos (position :key args :test #'(lambda (k x) 
+                                                        (and (symbolp x)
+                                                             (string-equal (symbol-name x) "KEY")))))
+                 (key-fn (when key-pos
+                           (let ((key-expr (nth (1+ key-pos) args)))
+                             (cond
+                               ((and (listp key-expr) (eq (car key-expr) 'function))
+                                (get-lisp-function (symbol-name (cadr key-expr))))
+                               ((and (listp key-expr)
+                                     (string-equal (symbol-name (car key-expr)) "LAMBDA"))
+                                (eval-formula key-expr))
+                               ;; :key :age のようなキーワードアクセス
+                               ((keywordp key-expr)
+                                (lambda (x) (getf x key-expr)))
+                               (t (eval-formula key-expr)))))))
+            (if (functionp pred)
+                (if key-fn
+                    (sort (copy-seq seq) pred :key key-fn)
+                    (sort (copy-seq seq) pred))
+                (format nil "ERR: not a function"))))
+         ;; STABLE-SORT（非破壊的、:key対応）
+         ((string-equal op-name "STABLE-SORT")
+          (let* ((args (cdr expr))
+                 (seq (eval-formula (first args)))
+                 (pred-expr (second args))
+                 (pred (cond
+                         ((null pred-expr) #'<)
+                         ((and (listp pred-expr) (eq (car pred-expr) 'function))
+                          (get-lisp-function (symbol-name (cadr pred-expr))))
+                         ((and (listp pred-expr)
+                               (string-equal (symbol-name (car pred-expr)) "LAMBDA"))
+                          (eval-formula pred-expr))
+                         (t (eval-formula pred-expr))))
+                 (key-pos (position :key args :test #'(lambda (k x)
+                                                        (and (symbolp x)
+                                                             (string-equal (symbol-name x) "KEY")))))
+                 (key-fn (when key-pos
+                           (let ((key-expr (nth (1+ key-pos) args)))
+                             (cond
+                               ((and (listp key-expr) (eq (car key-expr) 'function))
+                                (get-lisp-function (symbol-name (cadr key-expr))))
+                               ((and (listp key-expr)
+                                     (string-equal (symbol-name (car key-expr)) "LAMBDA"))
+                                (eval-formula key-expr))
+                               ((keywordp key-expr)
+                                (lambda (x) (getf x key-expr)))
+                               (t (eval-formula key-expr)))))))
+            (if (functionp pred)
+                (if key-fn
+                    (stable-sort (copy-seq seq) pred :key key-fn)
+                    (stable-sort (copy-seq seq) pred))
                 (format nil "ERR: not a function"))))
          ;; LIST（特別扱い：リストを作成）
          ((string-equal op-name "LIST")
@@ -2272,6 +2450,310 @@
   "Textウィジェットに文字列を設定"
   (setf (text text-widget) (if s (princ-to-string s) "")))
 
+;;;; =========================
+;;;; Syntax Highlighting
+;;;; =========================
+
+(defparameter *rainbow-colors*
+  '("#E00000"    ; 深さ0: 赤
+    "#0000FF"    ; 深さ1: 青
+    "#008800"    ; 深さ2: 緑
+    "#DD6600"    ; 深さ3: オレンジ
+    "#AA00AA"    ; 深さ4: 紫
+    "#007777")   ; 深さ5: シアン
+  "Rainbow括弧の色リスト（深さに応じて循環）")
+
+(defparameter *syntax-colors*
+  '((:string    . "#B8860B")    ; 文字列: ダークゴールデンロッド
+    (:number    . "#008888")    ; 数値: ティール
+    (:keyword   . "#9932CC")    ; キーワード: ダークオーキッド
+    (:cell-ref  . "#228B22")    ; セル参照: フォレストグリーン
+    (:function  . "#0000CD")    ; 関数名: ミディアムブルー
+    (:special   . "#DC143C")    ; 特殊シンボル: クリムゾン
+    (:rel-ref   . "#006400"))   ; 相対参照: ダークグリーン
+  "シンタックスハイライトの色定義")
+
+(defparameter *known-functions*
+  '("+" "-" "*" "/" "=" "/=" "<" ">" "<=" ">=" 
+    "if" "cond" "and" "or" "not"
+    "sum" "avg" "count" "cell-count" "max" "min"
+    "mapcar" "mapc" "maplist" "mapcan" "mapcon" "reduce"
+    "remove-if" "remove-if-not" "remove-duplicates"
+    "count-if" "count-if-not" "find" "find-if" "position" "position-if"
+    "substitute" "substitute-if" "substitute-if-not"
+    "every" "some" "notevery" "notany"
+    "intersection" "union" "set-difference" "set-exclusive-or" "subsetp"
+    "search" "mismatch"
+    "assoc" "assoc-if" "rassoc" "rassoc-if" "pairlis" "acons" "getf"
+    "apply" "funcall" "lambda" "function"
+    "list" "cons" "car" "cdr" "first" "rest" "nth" "length" "elt"
+    "append" "reverse" "sort" "stable-sort" "concatenate" "member" "subseq"
+    "copy-list" "copy-seq" "copy-tree" "copy-alist"
+    "abs" "sqrt" "expt" "exp" "log" "sin" "cos" "tan"
+    "floor" "ceiling" "round" "truncate" "mod" "rem"
+    "random" "logand" "logior" "logxor" "lognot" "ash"
+    "string" "string-upcase" "string-downcase" "char"
+    "char=" "char-equal" "digit-char"
+    "format" "parse-integer" "type-of" "typep" "coerce"
+    "range" "iota" "this-row" "this-col" "this-col-name" "this-cell-name" "cell-at"
+    "quote")
+  "ハイライト対象の関数名リスト")
+
+(defparameter *special-symbols*
+  '("t" "nil")
+  "特殊シンボルリスト")
+
+(defparameter *rel-symbols*
+  '("rel" "rel-range")
+  "相対参照シンボルリスト")
+
+(defun setup-syntax-tags (text-widget)
+  "Textウィジェットにシンタックスハイライト用タグを設定"
+  ;; Rainbow括弧のタグ
+  (loop for color in *rainbow-colors*
+        for i from 0
+        do (format-wish "~a tag configure paren~d -foreground {~a}"
+                        (widget-path text-widget) i color))
+  ;; 不一致括弧用のタグ（赤背景）
+  (format-wish "~a tag configure paren-error -foreground white -background red"
+               (widget-path text-widget))
+  ;; シンタックス要素のタグ
+  (format-wish "~a tag configure syn-string -foreground {~a}"
+               (widget-path text-widget) (cdr (assoc :string *syntax-colors*)))
+  (format-wish "~a tag configure syn-number -foreground {~a}"
+               (widget-path text-widget) (cdr (assoc :number *syntax-colors*)))
+  (format-wish "~a tag configure syn-keyword -foreground {~a}"
+               (widget-path text-widget) (cdr (assoc :keyword *syntax-colors*)))
+  (format-wish "~a tag configure syn-cell-ref -foreground {~a}"
+               (widget-path text-widget) (cdr (assoc :cell-ref *syntax-colors*)))
+  (format-wish "~a tag configure syn-function -foreground {~a}"
+               (widget-path text-widget) (cdr (assoc :function *syntax-colors*)))
+  (format-wish "~a tag configure syn-special -foreground {~a}"
+               (widget-path text-widget) (cdr (assoc :special *syntax-colors*)))
+  (format-wish "~a tag configure syn-rel-ref -foreground {~a}"
+               (widget-path text-widget) (cdr (assoc :rel-ref *syntax-colors*))))
+
+(defun pos-to-tk-index (content pos)
+  "文字位置をTkのline.col形式に変換"
+  (let* ((before (subseq content 0 pos))
+         (line (1+ (count #\Newline before)))
+         (last-nl (position #\Newline before :from-end t))
+         (col (if last-nl (- pos last-nl 1) pos)))
+    (format nil "~d.~d" line col)))
+
+(defun add-syntax-tag (text-widget content tag start end)
+  "指定範囲にシンタックスタグを適用"
+  (let ((tk-start (pos-to-tk-index content start))
+        (tk-end (pos-to-tk-index content end)))
+    (format-wish "~a tag add ~a ~a ~a"
+                 (widget-path text-widget) tag tk-start tk-end)))
+
+(defun symbol-char-p (char)
+  "シンボルを構成できる文字か判定"
+  (or (alphanumericp char)
+      (find char "+-*/<>=!?_")))
+
+(defun syntax-highlight (text-widget)
+  "Textウィジェット内をシンタックスハイライトする"
+  (let* ((content (text text-widget))
+         (len (length content))
+         (num-colors (length *rainbow-colors*))
+         ;; 解析用状態
+         (i 0)
+         (depth 0)
+         (paren-positions nil)
+         (tokens nil))  ; ((type start end) ...)
+    
+    ;; 既存のタグを削除
+    (loop for j from 0 below num-colors
+          do (format-wish "~a tag remove paren~d 1.0 end"
+                          (widget-path text-widget) j))
+    (format-wish "~a tag remove paren-error 1.0 end" (widget-path text-widget))
+    (dolist (tag '("syn-string" "syn-number" "syn-keyword" 
+                   "syn-cell-ref" "syn-function" "syn-special" "syn-rel-ref"))
+      (format-wish "~a tag remove ~a 1.0 end" (widget-path text-widget) tag))
+    
+    ;; トークン解析
+    (loop while (< i len) do
+      (let ((char (char content i)))
+        (cond
+          ;; 文字列
+          ((char= char #\")
+           (let ((start i))
+             (incf i)
+             (loop while (< i len)
+                   for c = (char content i)
+                   do (cond
+                        ((char= c #\\) (incf i 2))  ; エスケープをスキップ
+                        ((char= c #\") (incf i) (return))
+                        (t (incf i))))
+             (push (list :string start i) tokens)))
+          
+          ;; キーワード
+          ((char= char #\:)
+           (let ((start i))
+             (incf i)
+             (loop while (and (< i len) (symbol-char-p (char content i)))
+                   do (incf i))
+             (when (> i (1+ start))
+               (push (list :keyword start i) tokens))))
+          
+          ;; 開き括弧と関数名
+          ((char= char #\()
+           (push (cons i depth) paren-positions)
+           (incf depth)
+           (incf i)
+           ;; 括弧直後のシンボルを関数名として検出
+           (loop while (and (< i len) (find (char content i) " ~%	"))
+                 do (incf i))
+           (when (and (< i len) (symbol-char-p (char content i)))
+             (let ((start i))
+               (loop while (and (< i len) (symbol-char-p (char content i)))
+                     do (incf i))
+               (let ((sym (subseq content start i)))
+                 (cond
+                   ;; 相対参照
+                   ((member sym *rel-symbols* :test #'string-equal)
+                    (push (list :rel-ref start i) tokens))
+                   ;; 既知の関数
+                   ((member sym *known-functions* :test #'string-equal)
+                    (push (list :function start i) tokens))
+                   ;; セル参照 (関数位置でも)
+                   ((and (>= (length sym) 2)
+                         (<= (length sym) 4)
+                         (alpha-char-p (char sym 0))
+                         (every #'digit-char-p (subseq sym 1)))
+                    (push (list :cell-ref start i) tokens)))))))
+          
+          ;; 閉じ括弧
+          ((char= char #\))
+           (decf depth)
+           (if (< depth 0)
+               (progn
+                 (push (cons i -1) paren-positions)
+                 (setf depth 0))
+               (push (cons i depth) paren-positions))
+           (incf i))
+          
+          ;; 数値（符号付きも対応）
+          ((or (digit-char-p char)
+               (and (or (char= char #\-) (char= char #\+))
+                    (< (1+ i) len)
+                    (digit-char-p (char content (1+ i)))))
+           (let ((start i))
+             (when (or (char= char #\-) (char= char #\+))
+               (incf i))
+             (loop while (and (< i len) 
+                              (or (digit-char-p (char content i))
+                                  (char= (char content i) #\.)))
+                   do (incf i))
+             ;; 指数表記
+             (when (and (< i len) (find (char content i) "eE"))
+               (incf i)
+               (when (and (< i len) (find (char content i) "+-"))
+                 (incf i))
+               (loop while (and (< i len) (digit-char-p (char content i)))
+                     do (incf i)))
+             (push (list :number start i) tokens)))
+          
+          ;; シンボル（セル参照、特殊シンボル）
+          ((alpha-char-p char)
+           (let ((start i))
+             (loop while (and (< i len) (symbol-char-p (char content i)))
+                   do (incf i))
+             (let ((sym (subseq content start i)))
+               (cond
+                 ;; 相対参照
+                 ((member sym *rel-symbols* :test #'string-equal)
+                  (push (list :rel-ref start i) tokens))
+                 ;; 特殊シンボル
+                 ((member sym *special-symbols* :test #'string-equal)
+                  (push (list :special start i) tokens))
+                 ;; セル参照 (A1-Z99, AA1-ZZ99形式)
+                 ((and (>= (length sym) 2)
+                       (<= (length sym) 4)
+                       (alpha-char-p (char sym 0))
+                       (or (and (= (length sym) 2)
+                                (digit-char-p (char sym 1)))
+                           (and (>= (length sym) 2)
+                                (let ((first-digit-pos 
+                                       (position-if #'digit-char-p sym)))
+                                  (and first-digit-pos
+                                       (> first-digit-pos 0)
+                                       (every #'alpha-char-p (subseq sym 0 first-digit-pos))
+                                       (every #'digit-char-p (subseq sym first-digit-pos)))))))
+                  (push (list :cell-ref start i) tokens))))))
+          
+          ;; その他
+          (t (incf i)))))
+    
+    ;; タグを適用
+    ;; 括弧（Rainbow）
+    (dolist (pp paren-positions)
+      (let* ((pos (car pp))
+             (d (cdr pp))
+             (tk-start (pos-to-tk-index content pos))
+             (tk-end (pos-to-tk-index content (1+ pos))))
+        (if (= d -1)
+            (format-wish "~a tag add paren-error ~a ~a"
+                         (widget-path text-widget) tk-start tk-end)
+            (format-wish "~a tag add paren~d ~a ~a"
+                         (widget-path text-widget) 
+                         (mod d num-colors) tk-start tk-end))))
+    
+    ;; その他のトークン
+    (dolist (tok tokens)
+      (let ((type (first tok))
+            (start (second tok))
+            (end (third tok)))
+        (add-syntax-tag text-widget content
+                        (case type
+                          (:string "syn-string")
+                          (:number "syn-number")
+                          (:keyword "syn-keyword")
+                          (:cell-ref "syn-cell-ref")
+                          (:function "syn-function")
+                          (:special "syn-special")
+                          (:rel-ref "syn-rel-ref"))
+                        start end)))))
+
+;; 後方互換性のためのエイリアス
+(defun setup-rainbow-tags (text-widget)
+  (setup-syntax-tags text-widget))
+
+(defun colorize-parentheses (text-widget)
+  (syntax-highlight text-widget))
+
+;;;; =========================
+;;;; S式フォーマッター
+;;;; =========================
+
+(defun pprint-to-string (form)
+  "S式を整形して文字列に変換"
+  (let ((*print-pretty* t)
+        (*print-right-margin* 60)
+        (*print-miser-width* 40)
+        (*package* (find-package :ss-gui)))
+    (with-output-to-string (s)
+      (pprint form s))))
+
+(defun format-sexp (text-widget)
+  "入力枠のS式を整形する"
+  (let* ((content (get-text-content text-widget))
+         (trimmed (string-trim '(#\Space #\Tab #\Newline) content)))
+    (when (and (> (length trimmed) 0)
+               (char= (char trimmed 0) #\=))
+      ;; =で始まる数式の場合
+      (handler-case
+          (let* ((*package* (find-package :ss-gui))
+                 (form (read-from-string (subseq trimmed 1)))
+                 (formatted (string-trim '(#\Newline) (pprint-to-string form))))
+            (set-text-content text-widget (format nil "=~a" formatted))
+            (syntax-highlight text-widget))
+        (error (e)
+          ;; パースエラーの場合はメッセージ表示
+          (format t "Format error: ~a~%" e))))))
+
 (defun update-text-input (text-widget)
   "現在セルの内容をTextウィジェットに表示"
   (let ((c (current-cell))
@@ -2284,7 +2766,9 @@
       ((cell-value c)
        (set-text-content text-widget (format nil "~S" (cell-value c))))
       (t
-       (set-text-content text-widget "")))))
+       (set-text-content text-widget ""))))
+  ;; Rainbow括弧の色分けを更新
+  (colorize-parentheses text-widget))
 
 (defun format-error-message (error-type details)
   "エラーメッセージを整形"
@@ -2487,7 +2971,7 @@
 
 (defun update-window-title ()
   "ウィンドウタイトルを更新"
-  (wm-title *tk* (format nil "Spreadsheet v0.5.1 [~Dx~D]~a" 
+  (wm-title *tk* (format nil "Spreadsheet v0.5.2 [~Dx~D]~a" 
                          *cols* *rows*
                          (if *current-file* 
                              (format nil " - ~a" (file-namestring *current-file*))
@@ -2715,6 +3199,14 @@
                          (redraw canvas)
                          (update-text-input input-text)))
       
+      ;; セパレーター
+      (add-separator edit-menu)
+      
+      ;; Format Expression
+      (make-menubutton edit-menu "Format Expression   Ctrl+Shift+F"
+                       (lambda ()
+                         (format-sexp input-text)))
+      
       ;; キーボードショートカット (Ctrl+N, Ctrl+O, Ctrl+S)
       (bind *tk* "<Control-n>"
             (lambda (evt)
@@ -2793,6 +3285,14 @@
       (format-wish "~a configure -tabs [list [expr {[font measure TkFixedFont 0] * 4}]]" 
                    (widget-path input-text))
       
+      ;; Rainbow括弧のタグをセットアップ
+      (setup-rainbow-tags input-text)
+      ;; キー入力時に括弧を色分け
+      (bind input-text "<KeyRelease>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (colorize-parentheses input-text)))
+      
       ;; レイアウト - 入力フレーム内
       (pack input-scroll :side :right :fill :y)
       (pack input-text :side :left :fill :both :expand t)
@@ -2845,6 +3345,12 @@
               (declare (ignore evt))
               (update-text-input input-text)
               (focus canvas)))
+      
+      ;; Ctrl+Shift+F → S式を整形
+      (bind input-text "<Control-Shift-f>"
+            (lambda (evt)
+              (declare (ignore evt))
+              (format-sexp input-text)))
       
       ;; Tclレベルでバインディングを調整（breakでデフォルト動作を抑制）
       (let ((path (widget-path input-text)))
@@ -3223,7 +3729,7 @@
       (focus canvas))))
 
 ;;; ロード時メッセージ
-(format t "~%=== Spreadsheet GUI v0.5.1 ===~%")
+(format t "~%=== Spreadsheet GUI v0.5.2 ===~%")
 (format t "Lisp Powered Edition~%~%")
 (format t "起動: (ss-gui:start)~%")
 (format t "~%基本操作:~%")
@@ -3246,4 +3752,4 @@
 (format t "  Ctrl+N            : 新規作成~%")
 (format t "  Ctrl+O            : ファイルを開く~%")
 (format t "  Ctrl+S            : 保存~%")
-(format t "~%v0.5.1 新機能: 入力枠リサイズ、数式参照自動更新、固定幅フォント~%")
+(format t "~%v0.5.2 新機能: 関数150以上、sort :key対応、シンタックスハイライト、S式整形~%")

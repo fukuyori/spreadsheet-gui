@@ -2,7 +2,7 @@
 
 A Lisp-powered spreadsheet application built with Common Lisp and LTK
 
-![Version](https://img.shields.io/badge/version-0.5.1-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.2-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -135,6 +135,7 @@ sbcl --load quicklisp.lisp
 | Ctrl+X | Cut |
 | Ctrl+C | Copy |
 | Ctrl+V | Paste |
+| Ctrl+Shift+F | Format S-expression |
 
 ### File Operations
 
@@ -172,6 +173,7 @@ sbcl --load quicklisp.lisp
 | Insert Column | Insert column at cursor |
 | Delete Row | Delete row at cursor |
 | Delete Column | Delete column at cursor |
+| Format Expression | Format S-expression (Ctrl+Shift+F) |
 
 ### Context Menu (Right-Click on Headers)
 
@@ -327,10 +329,24 @@ The `.ssp` format is a human-readable S-expression format:
 
 ## Version History
 
-### v0.5.1 (Current)
+### v0.5.2 (Current)
+- Extended function library (150+ functions)
+  - Set operations: intersection, union, set-difference, set-exclusive-or
+  - Conditionals: every, some, notevery, notany
+  - Search: search, mismatch, find-if, position-if
+  - Plist access: getf, assoc-if, rassoc-if
+  - Bit operations: logand, logior, logxor, ash
+  - Random: random
+- Non-destructive sort/stable-sort with :key keyword support
+- COUNT now follows Common Lisp standard (count occurrences)
+- CELL-COUNT for counting cells in a range
+
+### v0.5.1
 - Resizable input area (drag the border between input and spreadsheet)
 - Fixed-width font for input area
 - Tab width set to 4 characters
+- S-expression formatter (Ctrl+Shift+F)
+- Syntax highlighting (Rainbow parentheses, numbers, strings, keywords, cell references, functions)
 
 ### v0.5
 - **Smart formula reference updates** on row/column insert/delete

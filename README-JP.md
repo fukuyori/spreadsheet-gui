@@ -2,7 +2,7 @@
 
 Common LispとLTKで構築されたLisp式表計算アプリケーション
 
-![Version](https://img.shields.io/badge/version-0.5.1-blue.svg)
+![Version](https://img.shields.io/badge/version-0.5.2-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -135,6 +135,7 @@ sbcl --load quicklisp.lisp
 | Ctrl+X | 切り取り |
 | Ctrl+C | コピー |
 | Ctrl+V | 貼り付け |
+| Ctrl+Shift+F | S式を整形 |
 
 ### ファイル操作
 
@@ -172,6 +173,7 @@ sbcl --load quicklisp.lisp
 | Insert Column | カーソル位置に列を挿入 |
 | Delete Row | カーソル位置の行を削除 |
 | Delete Column | カーソル位置の列を削除 |
+| Format Expression | S式を整形 (Ctrl+Shift+F) |
 
 ### コンテキストメニュー（ヘッダー上で右クリック）
 
@@ -327,10 +329,24 @@ ss-gui:*current-file*
 
 ## バージョン履歴
 
-### v0.5.1（現在）
+### v0.5.2（現在）
+- 拡張関数ライブラリ（150以上の関数）
+  - 集合演算: intersection, union, set-difference, set-exclusive-or
+  - 条件チェック: every, some, notevery, notany
+  - 検索: search, mismatch, find-if, position-if
+  - plistアクセス: getf, assoc-if, rassoc-if
+  - ビット演算: logand, logior, logxor, ash
+  - 乱数: random
+- 非破壊的 sort/stable-sort（:key キーワード対応）
+- COUNT が Common Lisp 標準に準拠（出現回数をカウント）
+- CELL-COUNT で範囲内のセル数をカウント
+
+### v0.5.1
 - 入力枠のリサイズ可能（境界線をドラッグ）
 - 入力枠に固定幅フォントを使用
 - タブ幅を4文字に設定
+- S式フォーマッター (Ctrl+Shift+F)
+- シンタックスハイライト（Rainbow括弧、数値、文字列、キーワード、セル参照、関数名）
 
 ### v0.5
 - 行・列の挿入・削除時の**数式参照の自動更新**
