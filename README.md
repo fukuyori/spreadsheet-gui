@@ -1,8 +1,16 @@
 # Spreadsheet GUI
 
+> ⚠️ **Notice: This is the final single-file version (v0.6)**
+> 
+> For continued development, please use **SSP (Symbolic Spreadsheet for Lisp Learning)**, which features a modular architecture.
+> 
+> **New repository:** [https://github.com/fukuyori/ssp](https://github.com/fukuyori/ssp)
+
+---
+
 A Lisp-powered spreadsheet application built with Common Lisp and LTK
 
-![Version](https://img.shields.io/badge/version-0.5.3-blue.svg)
+![Version](https://img.shields.io/badge/version-0.6-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -329,7 +337,21 @@ The `.ssp` format is a human-readable S-expression format:
 
 ## Version History
 
-### v0.5.3 (Current)
+### v0.6 (Final Single-File Version)
+- **Structure-based architecture** with defstruct
+  - `cell` structure for cell data
+  - `ss-state`, `resize-state`, `clipboard-data`, `eval-context` structures
+- **Accessor functions** for all global state
+  - `(cursor-x)`, `(cursor-y)`, `(sheet-rows)`, `(sheet-cols)`
+  - `(get-cell name)`, `(set-cell name value formula)`
+  - All internal state accessed through functions, not direct variable access
+- **Preparation for modular architecture**
+  - Code organized into logical sections
+  - Clear separation of concerns
+- **This is the final single-file version**
+  - For continued development, please use **SSP**: [https://github.com/fukuyori/ssp](https://github.com/fukuyori/ssp)
+
+### v0.5.3
 - **let / let\* / setf** local variable binding and assignment
   - `let` for parallel binding
   - `let*` for sequential binding

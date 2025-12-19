@@ -1,3 +1,5 @@
+/.vscode/
+
 # Lisp compiled files
 *.fasl
 *.fas
@@ -5,6 +7,7 @@
 *.o
 *.a
 tmp.lisp
+*.json
 
 # SBCL specific
 *.core
@@ -13,7 +16,7 @@ tmp.lisp
 *~
 \#*\#
 .\#*
-.vscode/
+.vscode\
 .gitignore
 
 # OS files

@@ -1,8 +1,16 @@
 # Spreadsheet GUI
 
+> ⚠️ **お知らせ: これが最終単一ファイル版（v0.6）です**
+> 
+> 継続開発には、モジュラーアーキテクチャを採用した **SSP (Symbolic Spreadsheet for Lisp Learning)** をご利用ください。
+> 
+> **新しいリポジトリ:** [https://github.com/fukuyori/ssp](https://github.com/fukuyori/ssp)
+
+---
+
 Common LispとLTKで構築されたLisp式表計算アプリケーション
 
-![Version](https://img.shields.io/badge/version-0.5.3-blue.svg)
+![Version](https://img.shields.io/badge/version-0.6-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Lisp](https://img.shields.io/badge/Lisp-Common%20Lisp-red.svg)
 
@@ -329,7 +337,21 @@ ss-gui:*current-file*
 
 ## バージョン履歴
 
-### v0.5.3（現在）
+### v0.6（最終単一ファイル版）
+- **構造体ベースアーキテクチャ** (defstruct使用)
+  - `cell` 構造体でセルデータを管理
+  - `ss-state`, `resize-state`, `clipboard-data`, `eval-context` 構造体
+- **アクセサ関数** による全グローバル状態へのアクセス
+  - `(cursor-x)`, `(cursor-y)`, `(sheet-rows)`, `(sheet-cols)`
+  - `(get-cell name)`, `(set-cell name value formula)`
+  - 直接変数アクセスではなく関数経由でアクセス
+- **モジュラーアーキテクチャへの準備**
+  - コードを論理的なセクションに整理
+  - 関心の分離を明確化
+- **これが最終単一ファイル版です**
+  - 継続開発には **SSP** をご利用ください: [https://github.com/fukuyori/ssp](https://github.com/fukuyori/ssp)
+
+### v0.5.3
 - **let / let\* / setf** ローカル変数束縛と代入
   - `let` 並列束縛
   - `let*` 逐次束縛
